@@ -1,0 +1,2 @@
+Generic single-database Alembic configuration.
+Run from backend/: alembic upgrade head
