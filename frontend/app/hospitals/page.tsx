@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { Hospital, MapPin, ArrowRight, RefreshCw } from "lucide-react";
-import { getApiBase, fetchWithTimeout } from "@/app/lib/api";
+import { getApiBase, fetchWithTimeout, formatApiError } from "@/app/lib/api";
 
 type HospitalItem = { id: number; name: string; code: string | null; is_active: boolean; city?: string | null; region?: string | null };
 
@@ -17,9 +17,12 @@ export default function HospitalsPage() {
     setError(null);
     const api = getApiBase();
     fetchWithTimeout(`${api}/api/hospitals`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((d) => setHospitals(Array.isArray(d) ? d : []))
-      .catch((e) => { setError(e?.message || "تعذر تحميل البيانات"); setHospitals([]); })
+      .catch((e) => { setError(formatApiError(e, "تعذر تحميل البيانات")); setHospitals([]); })
       .finally(() => setLoading(false));
   }, []);
 

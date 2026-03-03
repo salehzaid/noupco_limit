@@ -1,5 +1,7 @@
 const LOCAL_API_BASE = "http://127.0.0.1:8011";
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 25000;
+
+type FetchWithTimeoutOptions = RequestInit & { timeoutMs?: number };
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
@@ -24,18 +26,64 @@ export function getApiBase() {
   return "";
 }
 
+function isAbortError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof DOMException) return error.name === "AbortError";
+  if (error instanceof Error) {
+    return error.name === "AbortError" || error.message.toLowerCase().includes("aborted");
+  }
+  return false;
+}
+
+export function formatApiError(error: unknown, fallback = "تعذر الوصول إلى واجهة البرمجة"): string {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+
+  if (error instanceof Error) {
+    const message = error.message?.trim();
+    if (!message) return fallback;
+
+    if (isAbortError(error)) {
+      return "انتهت مهلة الاتصال بالخادم. يرجى إعادة المحاولة.";
+    }
+
+    if (message === "Failed to fetch") {
+      return "تعذر الاتصال بالخادم. تحقق من الشبكة ثم حاول مرة أخرى.";
+    }
+
+    if (/^HTTP \d{3}$/.test(message)) {
+      const status = Number(message.slice(5));
+      if (status === 404) return "الخدمة غير متاحة (404).";
+      if (status >= 500) return "الخادم غير متاح حاليا. حاول بعد قليل.";
+    }
+
+    if (message.includes("Unexpected token") && message.includes("<!DOCTYPE")) {
+      return "استجابة الخادم غير صالحة (ليست JSON).";
+    }
+
+    return message;
+  }
+
+  return fallback;
+}
+
 export async function fetchWithTimeout(
   url: string,
-  options?: RequestInit
+  options?: FetchWithTimeoutOptions
 ): Promise<Response> {
+  const { timeoutMs = FETCH_TIMEOUT_MS, ...requestOptions } = options ?? {};
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      ...options,
+    return await fetch(url, {
+      ...requestOptions,
       signal: controller.signal,
     });
-    return res;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error("انتهت مهلة الاتصال بالخادم. يرجى إعادة المحاولة.");
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

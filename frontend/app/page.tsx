@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { Hospital, LayoutGrid, CheckCircle2, XCircle, RefreshCw, Activity } from "lucide-react";
-import { getApiBase, fetchWithTimeout } from "@/app/lib/api";
+import { getApiBase, fetchWithTimeout, formatApiError } from "@/app/lib/api";
 
 type Health = { status?: string } | null;
 
@@ -17,13 +17,20 @@ export default function Home() {
     setError(null);
     const url = getApiBase();
     fetchWithTimeout(`${url}/health`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("استجابة غير صالحة من الخادم");
+        }
+        return res.json();
+      })
       .then((data) => {
         setHealth(data);
         setError(null);
       })
       .catch((err) => {
-        setError(err?.message || "تعذر الوصول إلى واجهة البرمجة");
+        setError(formatApiError(err, "تعذر الوصول إلى واجهة البرمجة"));
         setHealth(null);
       })
       .finally(() => setLoading(false));

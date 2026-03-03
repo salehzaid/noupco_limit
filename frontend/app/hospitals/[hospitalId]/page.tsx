@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { TrendingUp, Package, Building2, ArrowLeft, RefreshCw } from "lucide-react";
-import { getApiBase, fetchWithTimeout } from "@/app/lib/api";
+import { getApiBase, fetchWithTimeout, formatApiError } from "@/app/lib/api";
 
 type Summary = { departments_count: number; items_with_limits_count: number; total_limits_sum: number };
 type TopDept = { department_id: number; department_name: string; total_limit: number };
@@ -46,7 +46,7 @@ export default function OverviewPage() {
         if (!d || typeof d !== "object") throw new Error("استجابة غير صالحة");
         setData(d);
       })
-      .catch((e) => setError(e?.message || "تعذر تحميل البيانات"))
+      .catch((e) => setError(formatApiError(e, "تعذر تحميل البيانات")))
       .finally(() => setLoading(false));
   }, [hospitalId]);
 
