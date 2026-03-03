@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { Building2, Upload, ArrowDownToLine, ArrowUpFromLine, KeyRound, Settings, Lock, Unlock, Info } from "lucide-react";
+import { getApiBase } from "@/app/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8011";
-const ADMIN_KEY_STORAGE_KEY = "nupco_admin_key";
+const API = getApiBase();
 
 type HospitalProfile = { id: number; name: string; code: string | null; is_active: boolean; city: string | null; region: string | null; contact_name: string | null; contact_phone: string | null; notes: string | null };
 type Dept = { id: number; name: string };
-type MasterImportResult = { effective_year: number; dry_run: boolean; hospital_id: number | null; departments_created: number; departments_linked: number; departments_total: number; rows_read: number; limits_upserted: number; missing_items: number; created_items: number; skipped_values: number; invalid_values: number; errors_sample: string[] };
+type MasterImportResult = { effective_year: number; dry_run: boolean; hospital_id: number | null; departments_created: number; departments_linked: number; departments_total: number; rows_read: number; limits_deleted_before_import: number; limits_upserted: number; missing_items: number; created_items: number; skipped_values: number; invalid_values: number; errors_sample: string[] };
+type HospitalLimitsDeleteResult = { hospital_id: number; effective_year: number | null; departments_count: number; deleted_limits: number };
+type DepartmentDeleteResult = { hospital_id: number; department_id: number; department_name: string; deleted_limits: number; deleted_audit_logs: number };
 type ImportPreviewRow = { generic_item_number: string; item_id: number | null; old_quantity: number | null; new_quantity: number; action: string };
 type DeptImportResult = { department_id: number; effective_year: number; dry_run: boolean; rows_read: number; upserted: number; deleted: number; missing_items: number; invalid_values: number; prefix_matched?: number; ambiguous_codes?: number; errors_sample: string[]; preview_rows?: ImportPreviewRow[] };
 
@@ -32,18 +34,6 @@ export default function AdminHubPage() {
   const initialTab = (searchParams.get("tab") as TabId) || "profile";
 
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
-  const [adminKey, setAdminKey] = useState("");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") setAdminKey(window.localStorage.getItem(ADMIN_KEY_STORAGE_KEY) || "");
-  }, []);
-
-  const onAdminKeyChange = (v: string) => {
-    setAdminKey(v);
-    if (typeof window === "undefined") return;
-    if (v) window.localStorage.setItem(ADMIN_KEY_STORAGE_KEY, v);
-    else window.localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
-  };
 
   return (
     <div className="max-w-5xl mx-auto animate-fade-in">
@@ -55,16 +45,6 @@ export default function AdminHubPage() {
           <h1 className="text-xl font-bold text-gray-800">الإدارة</h1>
           <p className="text-sm text-gray-500">إعدادات المستشفى، الاستيراد، التصدير، وإدارة أرقام الدخول.</p>
         </div>
-      </div>
-
-      {/* Admin key */}
-      <div className="glass rounded-2xl p-4 mb-6 shadow-lg shadow-black/5 flex flex-wrap items-center gap-4">
-        <Settings size={18} className="text-gray-400" />
-        <label className="flex w-full items-center gap-2 text-sm sm:w-auto">
-          <span className="text-gray-600 whitespace-nowrap">مفتاح المسؤول:</span>
-          <input type="password" value={adminKey} onChange={(e) => onAdminKeyChange(e.target.value)} placeholder="مطلوب للعمليات" className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400/40 focus:outline-none sm:w-48" />
-        </label>
-        {!adminKey && <span className="text-xs text-amber-600">يرجى إدخال المفتاح لتفعيل العمليات</span>}
       </div>
 
       {/* Tabs */}
@@ -80,17 +60,17 @@ export default function AdminHubPage() {
 
       {/* Tab content */}
       <div className="animate-scale-in" key={activeTab}>
-        {activeTab === "profile" && <ProfileTab hospitalId={hospitalId} adminKey={adminKey} />}
-        {activeTab === "master-import" && <MasterImportTab hospitalId={hospitalId} adminKey={adminKey} />}
-        {activeTab === "dept-io" && <DeptIOTab hospitalId={hospitalId} adminKey={adminKey} />}
-        {activeTab === "pins" && <PinsTab hospitalId={hospitalId} adminKey={adminKey} />}
+        {activeTab === "profile" && <ProfileTab hospitalId={hospitalId} />}
+        {activeTab === "master-import" && <MasterImportTab hospitalId={hospitalId} />}
+        {activeTab === "dept-io" && <DeptIOTab hospitalId={hospitalId} />}
+        {activeTab === "pins" && <PinsTab hospitalId={hospitalId} />}
       </div>
     </div>
   );
 }
 
 /* ====================== PROFILE TAB ====================== */
-function ProfileTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: string }) {
+function ProfileTab({ hospitalId }: { hospitalId: string }) {
   const [profile, setProfile] = useState<HospitalProfile | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Partial<HospitalProfile>>({});
@@ -106,10 +86,7 @@ function ProfileTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: st
   const save = async () => {
     setSaving(true); setMsg(null);
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (adminKey) headers["X-Admin-Key"] = adminKey;
-      const res = await fetch(`${API}/api/hospitals/${hospitalId}`, { method: "PUT", headers, body: JSON.stringify(draft) });
-      if (res.status === 403) { setMsg({ type: "err", text: "مفتاح المسؤول مطلوب أو غير صحيح" }); return; }
+      const res = await fetch(`${API}/api/hospitals/${hospitalId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
       if (!res.ok) { const e = await res.json().catch(() => ({})); setMsg({ type: "err", text: (e as { detail?: string }).detail || `تعذر الحفظ (${res.status})` }); return; }
       const updated: HospitalProfile = await res.json();
       setProfile(updated); setEditing(false); setMsg({ type: "ok", text: "تم الحفظ" });
@@ -173,24 +150,55 @@ function ProfileTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: st
 }
 
 /* ====================== MASTER IMPORT TAB ====================== */
-function MasterImportTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: string }) {
+function MasterImportTab({ hospitalId }: { hospitalId: string }) {
   const [effectiveYear, setEffectiveYear] = useState("2025");
+  const [replaceExisting, setReplaceExisting] = useState(false);
   const [result, setResult] = useState<MasterImportResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [clearLoading, setClearLoading] = useState(false);
+  const [clearMsg, setClearMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const doImport = async (file: File, dryRun: boolean) => {
-    setLoading(true); if (dryRun) setResult(null);
-    const form = new FormData(); form.append("file", file);
-    const headers: Record<string, string> = {}; if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const clearHospitalLimits = async () => {
+    const ok = window.confirm("سيتم حذف كل بيانات الحد الأعلى لهذا المستشفى في السنة المحددة. هل أنت متأكد؟");
+    if (!ok) return;
+    setClearLoading(true);
+    setClearMsg(null);
     try {
-      const res = await fetch(`${API}/api/import/max-limits-master?effective_year=${effectiveYear}&dry_run=${dryRun}&hospital_id=${hospitalId}`, { method: "POST", body: form, headers });
+      const res = await fetch(`${API}/api/hospitals/${hospitalId}/max-limits?effective_year=${effectiveYear}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setClearMsg({ type: "err", text: (data as { detail?: string }).detail || `تعذر الحذف (${res.status})` });
+        return;
+      }
+      const out = data as HospitalLimitsDeleteResult;
+      setResult(null);
+      setPendingFile(null);
+      setClearMsg({
+        type: "ok",
+        text: `تم حذف ${out.deleted_limits.toLocaleString("ar-SA")} حد من ${out.departments_count.toLocaleString("ar-SA")} قسم`,
+      });
+    } catch (e) {
+      setClearMsg({ type: "err", text: String(e) });
+    } finally {
+      setClearLoading(false);
+    }
+  };
+
+  const doImport = async (file: File, dryRun: boolean) => {
+    setLoading(true);
+    setClearMsg(null);
+    if (dryRun) setResult(null);
+    const form = new FormData(); form.append("file", file);
+    try {
+      const res = await fetch(`${API}/api/import/max-limits-master?effective_year=${effectiveYear}&dry_run=${dryRun}&hospital_id=${hospitalId}&replace_existing=${replaceExisting}`, { method: "POST", body: form });
       const data: MasterImportResult = await res.json();
-      if (res.status === 403) { setResult({ ...data, errors_sample: ["مفتاح المسؤول مطلوب أو غير صحيح"] }); setPendingFile(null); return; }
       setResult(data); setPendingFile(dryRun ? file : null);
     } catch (e) {
-      setResult({ effective_year: Number(effectiveYear), dry_run: dryRun, hospital_id: Number(hospitalId), departments_created: 0, departments_linked: 0, departments_total: 0, rows_read: 0, limits_upserted: 0, missing_items: 0, created_items: 0, skipped_values: 0, invalid_values: 0, errors_sample: [String(e)] });
+      setResult({ effective_year: Number(effectiveYear), dry_run: dryRun, hospital_id: Number(hospitalId), departments_created: 0, departments_linked: 0, departments_total: 0, rows_read: 0, limits_deleted_before_import: 0, limits_upserted: 0, missing_items: 0, created_items: 0, skipped_values: 0, invalid_values: 0, errors_sample: [String(e)] });
       setPendingFile(null);
     } finally { setLoading(false); if (dryRun && fileRef.current) fileRef.current.value = ""; }
   };
@@ -200,9 +208,17 @@ function MasterImportTab({ hospitalId, adminKey }: { hospitalId: string; adminKe
       <div className="glass rounded-2xl p-5 shadow-lg shadow-black/5">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">استيراد الحد الأعلى الرئيسي</h2>
         <p className="text-xs text-gray-500 mb-4">يُنشئ الأقسام تلقائيًا من أعمدة الملف ويربطها بهذا المستشفى، ثم يوزّع قيم الحد الأعلى لكل قسم.</p>
-        <div className="flex flex-wrap gap-3 items-end mb-4">
+        <div className="flex flex-wrap gap-3 items-center mb-4">
           <label className="block text-sm"><span className="text-xs text-gray-500 block mb-1">السنة</span><input type="number" value={effectiveYear} onChange={(e) => setEffectiveYear(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 w-24 text-sm" /></label>
+          <label className="mt-4 inline-flex items-center gap-2 text-xs text-gray-600 sm:mt-5">
+            <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="rounded border-gray-300" />
+            <span>استبدال كامل قبل الاستيراد (حذف حدود السنة الحالية أولًا)</span>
+          </label>
+          <button onClick={clearHospitalLimits} disabled={clearLoading} className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100 disabled:opacity-50 sm:mt-5">
+            {clearLoading ? "جارٍ الحذف…" : "حذف كل بيانات الحد الأعلى"}
+          </button>
         </div>
+        {clearMsg && <p className={`mb-3 text-xs ${clearMsg.type === "ok" ? "text-green-700" : "text-red-700"}`}>{clearMsg.text}</p>}
         <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-200/60 text-xs text-amber-800 mb-4">
           <p className="font-medium mb-1 flex items-center gap-1"><Info size={14} /> الصيغة المطلوبة:</p>
           <ul className="list-disc list-inside space-y-0.5 mr-5">
@@ -228,6 +244,7 @@ function MasterImportTab({ hospitalId, adminKey }: { hospitalId: string; adminKe
             <StatBadge label="أقسام مرتبطة" value={result.departments_linked} color="indigo" />
             <StatBadge label="إجمالي الأقسام" value={result.departments_total} color="gray" />
             <StatBadge label="صفوف مقروءة" value={result.rows_read} color="gray" />
+            {result.limits_deleted_before_import > 0 && <StatBadge label="محذوف قبل الاستيراد" value={result.limits_deleted_before_import} color="red" />}
             <StatBadge label="حدود محدّثة" value={result.limits_upserted} color="green" />
             <StatBadge label="بنود منشأة" value={result.created_items} color="teal" />
             <StatBadge label="بنود مفقودة" value={result.missing_items} color="amber" />
@@ -238,7 +255,7 @@ function MasterImportTab({ hospitalId, adminKey }: { hospitalId: string; adminKe
           {result.dry_run ? (
             <div className="flex gap-3 mt-2">
               <button onClick={() => { setResult(null); setPendingFile(null); }} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">إلغاء</button>
-              <button onClick={() => { if (pendingFile) doImport(pendingFile, false); }} disabled={result.errors_sample.some((e) => e.includes("مفتاح"))} className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">تأكيد الاستيراد</button>
+              <button onClick={() => { if (pendingFile) doImport(pendingFile, false); }} className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">تأكيد الاستيراد</button>
             </div>
           ) : (
             <button onClick={() => { setResult(null); setPendingFile(null); }} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">استيراد جديد</button>
@@ -250,18 +267,29 @@ function MasterImportTab({ hospitalId, adminKey }: { hospitalId: string; adminKe
 }
 
 /* ====================== DEPT I/O TAB ====================== */
-function DeptIOTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: string }) {
+function DeptIOTab({ hospitalId }: { hospitalId: string }) {
   const [depts, setDepts] = useState<Dept[]>([]);
   const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
   const [effectiveYear, setEffectiveYear] = useState("2025");
   const [result, setResult] = useState<DeptImportResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteMsg, setDeleteMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    fetch(`${API}/api/hospitals/${hospitalId}/departments`).then((r) => r.json()).then((d: Dept[]) => setDepts(d)).catch(() => {});
+  const loadDepartments = useCallback(async () => {
+    try {
+      const d: Dept[] = await fetch(`${API}/api/hospitals/${hospitalId}/departments`).then((r) => r.json());
+      setDepts(Array.isArray(d) ? d : []);
+    } catch {
+      setDepts([]);
+    }
   }, [hospitalId]);
+
+  useEffect(() => {
+    loadDepartments();
+  }, [loadDepartments]);
 
   const selectedDept = depts.find((d) => d.id === selectedDeptId);
 
@@ -271,16 +299,43 @@ function DeptIOTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: str
   };
 
   const doImport = async (file: File, dryRun: boolean) => {
-    if (!selectedDeptId) return; setLoading(true); if (dryRun) setResult(null);
+    if (!selectedDeptId) return; setLoading(true); setDeleteMsg(null); if (dryRun) setResult(null);
     const form = new FormData(); form.append("file", file);
-    const headers: Record<string, string> = {}; if (adminKey) headers["X-Admin-Key"] = adminKey;
     try {
-      const res = await fetch(`${API}/api/import/department-max-limits?department_id=${selectedDeptId}&effective_year=${effectiveYear}&dry_run=${dryRun}`, { method: "POST", body: form, headers });
+      const res = await fetch(`${API}/api/import/department-max-limits?department_id=${selectedDeptId}&effective_year=${effectiveYear}&dry_run=${dryRun}`, { method: "POST", body: form });
       const data: DeptImportResult = await res.json();
-      if (res.status === 403) { setResult({ ...data, errors_sample: ["مفتاح المسؤول مطلوب أو غير صحيح"] }); setPendingFile(null); return; }
       setResult(data); setPendingFile(dryRun ? file : null);
     } catch (e) { setResult({ department_id: selectedDeptId, effective_year: Number(effectiveYear), dry_run: dryRun, rows_read: 0, upserted: 0, deleted: 0, missing_items: 0, invalid_values: 0, errors_sample: [String(e)] }); setPendingFile(null);
     } finally { setLoading(false); if (dryRun && fileRef.current) fileRef.current.value = ""; }
+  };
+
+  const handleDeleteDepartment = async () => {
+    if (!selectedDeptId || !selectedDept) return;
+    const ok = window.confirm(`سيتم حذف قسم "${selectedDept.name}" نهائيا مع الحدود وسجل التدقيق المرتبط به. هل أنت متأكد؟`);
+    if (!ok) return;
+    setDeleteLoading(true);
+    setDeleteMsg(null);
+    try {
+      const res = await fetch(`${API}/api/hospitals/${hospitalId}/departments/${selectedDeptId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDeleteMsg({ type: "err", text: (data as { detail?: string }).detail || `تعذر حذف القسم (${res.status})` });
+        return;
+      }
+      const out = data as DepartmentDeleteResult;
+      setDeleteMsg({
+        type: "ok",
+        text: `تم حذف القسم ${out.department_name} (حدود: ${out.deleted_limits.toLocaleString("ar-SA")}, تدقيق: ${out.deleted_audit_logs.toLocaleString("ar-SA")})`,
+      });
+      setSelectedDeptId(null);
+      setResult(null);
+      setPendingFile(null);
+      await loadDepartments();
+    } catch (e) {
+      setDeleteMsg({ type: "err", text: String(e) });
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   return (
@@ -296,6 +351,7 @@ function DeptIOTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: str
           </label>
           <label className="block text-sm"><span className="text-xs text-gray-500 block mb-1">السنة</span><input type="number" value={effectiveYear} onChange={(e) => setEffectiveYear(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 w-24 text-sm" /></label>
         </div>
+        {deleteMsg && <p className={`mb-4 text-xs ${deleteMsg.type === "ok" ? "text-green-700" : "text-red-700"}`}>{deleteMsg.text}</p>}
 
         {selectedDeptId ? (
           <div className="flex flex-wrap gap-3">
@@ -305,6 +361,9 @@ function DeptIOTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: str
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f, true); }} />
             <button onClick={() => fileRef.current?.click()} disabled={loading} className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-sm font-medium shadow-lg shadow-blue-500/25 hover:shadow-xl transition-all disabled:opacity-50">
               <ArrowUpFromLine size={16} /> {loading ? "جارٍ المعالجة…" : `استيراد — ${selectedDept?.name}`}
+            </button>
+            <button onClick={handleDeleteDepartment} disabled={deleteLoading || loading} className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-red-300 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100 transition-all disabled:opacity-50">
+              {deleteLoading ? "جارٍ الحذف…" : `حذف القسم — ${selectedDept?.name}`}
             </button>
           </div>
         ) : (
@@ -347,7 +406,7 @@ function DeptIOTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: str
 }
 
 /* ====================== PINS TAB ====================== */
-function PinsTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: string }) {
+function PinsTab({ hospitalId }: { hospitalId: string }) {
   const [depts, setDepts] = useState<Dept[]>([]);
   const [pinMap, setPinMap] = useState<Record<number, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -374,10 +433,7 @@ function PinsTab({ hospitalId, adminKey }: { hospitalId: string; adminKey: strin
   const handleSetPin = async (deptId: number, pinValue: string | null) => {
     setSavingId(deptId); setPinMsg((p) => ({ ...p, [deptId]: { type: "ok", text: "" } }));
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (adminKey) headers["X-Admin-Key"] = adminKey;
-      const res = await fetch(`${API}/api/departments/${deptId}/pin`, { method: "PUT", headers, body: JSON.stringify(pinValue !== null ? { pin: pinValue } : { pin: null }) });
-      if (res.status === 403) { setPinMsg((p) => ({ ...p, [deptId]: { type: "err", text: "مفتاح غير صحيح" } })); return; }
+      const res = await fetch(`${API}/api/departments/${deptId}/pin`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pinValue !== null ? { pin: pinValue } : { pin: null }) });
       if (!res.ok) { const e = await res.json().catch(() => ({})); setPinMsg((p) => ({ ...p, [deptId]: { type: "err", text: (e as { detail?: string }).detail || "تعذر تحديث الرمز" } })); return; }
       setPinMsg((p) => ({ ...p, [deptId]: { type: "ok", text: pinValue !== null ? "تم التعيين" : "تم المسح" } }));
       setPinDraft((p) => ({ ...p, [deptId]: "" })); refreshPins();

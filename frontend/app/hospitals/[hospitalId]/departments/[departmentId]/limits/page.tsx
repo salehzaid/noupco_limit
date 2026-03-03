@@ -5,8 +5,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import LimitsUI from "@/app/_components/LimitsUI";
 import { ArrowRight, AlertTriangle, ShieldAlert } from "lucide-react";
+import { getApiBase } from "@/app/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8011";
+const API = getApiBase();
 
 export default function HospitalDepartmentLimitsPage() {
   const params = useParams<{ hospitalId: string; departmentId: string }>();

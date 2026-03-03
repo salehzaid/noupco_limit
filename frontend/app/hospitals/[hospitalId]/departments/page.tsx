@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Search, ArrowLeft, CheckCircle2, AlertCircle, Building2, Layers } from "lucide-react";
+import { getApiBase } from "@/app/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8011";
+const API = getApiBase();
 
 type DeptBrief = { id: number; name: string };
 type CoverageRow = { department_id: number; department_name: string; items_with_limits: number };

@@ -3,9 +3,9 @@ Hospitals API: list hospitals, dashboard analytics.
 """
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -107,6 +107,13 @@ class DepartmentBrief(BaseModel):
     name: str
 
 
+class HospitalLimitsDeleteResult(BaseModel):
+    hospital_id: int
+    effective_year: int | None
+    departments_count: int
+    deleted_limits: int
+
+
 @router.get("/hospitals/{hospital_id}/departments", response_model=list[DepartmentBrief])
 def list_hospital_departments(hospital_id: int, db: Session = Depends(get_db)):
     """Return departments for one hospital, ordered by name."""
@@ -117,6 +124,57 @@ def list_hospital_departments(hospital_id: int, db: Session = Depends(get_db)):
         select(Department).where(Department.hospital_id == hospital_id).order_by(Department.name)
     ).scalars().all()
     return [DepartmentBrief(id=r.id, name=r.name) for r in rows]
+
+
+@router.delete(
+    "/hospitals/{hospital_id}/max-limits",
+    response_model=HospitalLimitsDeleteResult,
+    dependencies=[Depends(require_admin_key)],
+)
+def delete_hospital_max_limits(
+    hospital_id: int,
+    effective_year: int | None = Query(2025, description="Year to delete. Pass null to delete all years."),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete all department max limits for one hospital across all its departments.
+    By default deletes only the requested effective_year.
+    """
+    hospital = db.execute(select(Hospital).where(Hospital.id == hospital_id)).scalar_one_or_none()
+    if not hospital:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+
+    dept_ids = [
+        r[0]
+        for r in db.execute(
+            select(Department.id).where(Department.hospital_id == hospital_id)
+        ).all()
+    ]
+    if not dept_ids:
+        return HospitalLimitsDeleteResult(
+            hospital_id=hospital_id,
+            effective_year=effective_year,
+            departments_count=0,
+            deleted_limits=0,
+        )
+
+    filters = [DepartmentMaxLimit.department_id.in_(dept_ids)]
+    if effective_year is not None:
+        filters.append(DepartmentMaxLimit.effective_year == effective_year)
+
+    deleted_limits = (
+        db.execute(select(func.count()).select_from(DepartmentMaxLimit).where(*filters)).scalar() or 0
+    )
+    if deleted_limits:
+        db.execute(delete(DepartmentMaxLimit).where(*filters))
+    db.commit()
+
+    return HospitalLimitsDeleteResult(
+        hospital_id=hospital_id,
+        effective_year=effective_year,
+        departments_count=len(dept_ids),
+        deleted_limits=deleted_limits,
+    )
 
 
 # ── Department PIN endpoints (must be before {department_id} catch-all) ──
@@ -147,6 +205,14 @@ class DepartmentDetail(BaseModel):
     is_active: bool
 
 
+class DepartmentDeleteResult(BaseModel):
+    hospital_id: int
+    department_id: int
+    department_name: str
+    deleted_limits: int
+    deleted_audit_logs: int
+
+
 @router.get("/hospitals/{hospital_id}/departments/{department_id}", response_model=DepartmentDetail)
 def get_hospital_department(hospital_id: int, department_id: int, db: Session = Depends(get_db)):
     """Return a single department if it belongs to the given hospital; 404 otherwise."""
@@ -156,6 +222,54 @@ def get_hospital_department(hospital_id: int, department_id: int, db: Session = 
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found in this hospital")
     return DepartmentDetail(id=dept.id, name=dept.name, hospital_id=dept.hospital_id, is_active=dept.is_active)
+
+
+@router.delete(
+    "/hospitals/{hospital_id}/departments/{department_id}",
+    response_model=DepartmentDeleteResult,
+    dependencies=[Depends(require_admin_key)],
+)
+def delete_hospital_department(hospital_id: int, department_id: int, db: Session = Depends(get_db)):
+    """Delete one department from a hospital (including its limits and audit rows)."""
+    dept = db.execute(
+        select(Department).where(Department.id == department_id, Department.hospital_id == hospital_id)
+    ).scalar_one_or_none()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found in this hospital")
+
+    deleted_limits = (
+        db.execute(
+            select(func.count())
+            .select_from(DepartmentMaxLimit)
+            .where(DepartmentMaxLimit.department_id == department_id)
+        ).scalar()
+        or 0
+    )
+    if deleted_limits:
+        db.execute(delete(DepartmentMaxLimit).where(DepartmentMaxLimit.department_id == department_id))
+
+    deleted_audit_logs = (
+        db.execute(
+            select(func.count())
+            .select_from(MaxLimitAuditLog)
+            .where(MaxLimitAuditLog.department_id == department_id)
+        ).scalar()
+        or 0
+    )
+    if deleted_audit_logs:
+        db.execute(delete(MaxLimitAuditLog).where(MaxLimitAuditLog.department_id == department_id))
+
+    dept_name = dept.name
+    db.delete(dept)
+    db.commit()
+
+    return DepartmentDeleteResult(
+        hospital_id=hospital_id,
+        department_id=department_id,
+        department_name=dept_name,
+        deleted_limits=deleted_limits,
+        deleted_audit_logs=deleted_audit_logs,
+    )
 
 
 class PinVerifyBody(BaseModel):

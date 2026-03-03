@@ -1,13 +1,13 @@
 "use client";
 
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { LayoutGrid, Database, FileDown, FileUp, History, KeyRound, ChevronDown, Search, Plus, RefreshCw } from "lucide-react";
+import { LayoutGrid, Database, FileDown, FileUp, History, ChevronDown, Search, Plus, RefreshCw } from "lucide-react";
 import AiReportPanel from "@/app/_components/AiReportPanel";
+import { getApiBase } from "@/app/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8011";
+const API = getApiBase();
 const PAGE_SIZE = 50;
 const ALT_MODE_STORAGE_KEY = "nupco_limits_alternatives_mode";
-const ADMIN_KEY_STORAGE_KEY = "nupco_admin_key";
 const CHANGED_ITEMS_STORAGE_PREFIX = "nupco_changed_items_dept_";
 
 type AltMode = "strict" | "balanced" | "wide";
@@ -104,13 +104,6 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
   const [auditLoading, setAuditLoading] = useState(false);
 
   const [backupMsg, setBackupMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-
-  const [adminKey, setAdminKey] = useState(() => (typeof window !== "undefined" ? window.localStorage.getItem(ADMIN_KEY_STORAGE_KEY) || "" : ""));
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (adminKey) window.localStorage.setItem(ADMIN_KEY_STORAGE_KEY, adminKey);
-    else window.localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
-  }, [adminKey]);
 
   const [alternativesMode, setAlternativesMode] = useState<AltMode>(() => {
     if (typeof window === "undefined") return "balanced";
@@ -235,15 +228,13 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
     if (!deptId) return; setImportLoading(true); if (!confirmImport) setImportResult(null);
     const form = new FormData(); form.append("file", file); const dryRun = !confirmImport;
     try {
-      const headers: Record<string, string> = {}; if (adminKey) headers["X-Admin-Key"] = adminKey;
-      const res = await fetch(`${API}/api/import/department-max-limits?department_id=${deptId}&effective_year=2025&dry_run=${dryRun}`, { method: "POST", body: form, headers });
+      const res = await fetch(`${API}/api/import/department-max-limits?department_id=${deptId}&effective_year=2025&dry_run=${dryRun}`, { method: "POST", body: form });
       const data: ImportResult = await res.json();
-      if (res.status === 403) { setImportResult({ ...data, errors_sample: ["مفتاح المسؤول مطلوب أو غير صحيح"] }); setPendingImportFile(null); setImportLoading(false); return; }
       setImportResult(data);
       if (dryRun && data.preview_rows && data.preview_rows.length > 0) { setPendingImportFile(file); } else { setPendingImportFile(null); if (!data.dry_run && (data.upserted > 0 || data.deleted > 0)) refreshTable(); }
     } catch (e) { setImportResult({ department_id: deptId, effective_year: 2025, dry_run: false, rows_read: 0, upserted: 0, deleted: 0, missing_items: 0, invalid_values: 0, prefix_matched: 0, ambiguous_codes: 0, errors_sample: [String(e)] }); setPendingImportFile(null); }
     finally { setImportLoading(false); if (!confirmImport && fileInputRef.current) fileInputRef.current.value = ""; }
-  }, [deptId, refreshTable, adminKey]);
+  }, [deptId, refreshTable]);
 
   const handleConfirmImport = useCallback(() => { if (!pendingImportFile || !deptId) return; handleImportFile(pendingImportFile, true); }, [pendingImportFile, deptId, handleImportFile]);
 
@@ -255,14 +246,13 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
   const handleBackupDb = useCallback(async () => {
     setBackupMsg(null);
     try {
-      const headers: Record<string, string> = {}; if (adminKey) headers["X-Admin-Key"] = adminKey;
-      const res = await fetch(`${API}/api/admin/db-backup`, { headers });
-      if (!res.ok) { const err = await res.json().catch(() => ({ detail: res.statusText })); setBackupMsg({ type: "err", text: res.status === 403 ? "مفتاح المسؤول مطلوب أو غير صحيح" : ((err as { detail?: string }).detail || "فشل إنشاء النسخة الاحتياطية") }); return; }
+      const res = await fetch(`${API}/api/admin/db-backup`);
+      if (!res.ok) { const err = await res.json().catch(() => ({ detail: res.statusText })); setBackupMsg({ type: "err", text: ((err as { detail?: string }).detail || "فشل إنشاء النسخة الاحتياطية") }); return; }
       const blob = await res.blob(); const disp = res.headers.get("Content-Disposition"); const match = disp?.match(/filename="?([^";]+)"?/); const name = match?.[1] || "nupco_limit_backup.sql";
       const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url); setBackupMsg({ type: "ok", text: "تم تنزيل النسخة الاحتياطية" });
     } catch (e) { setBackupMsg({ type: "err", text: String(e) }); }
     setTimeout(() => setBackupMsg(null), 4000);
-  }, [adminKey]);
+  }, []);
 
   const fetchAltsWithLimits = useCallback(async (itemId: number, departmentId: number, setList: (v: AltWithLimit[]) => void, setLoading: (v: boolean) => void, setError: (v: string | null) => void, setQtyMap: (v: Record<number, string>) => void, setRecommendedMinScore: (v: number | null) => void, setMinScoreOverride: (v: number | null) => void) => {
     setList([]); setError(null); setRecommendedMinScore(null); setMinScoreOverride(null); setLoading(true);
@@ -372,10 +362,6 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1.5 text-sm text-blue-200/80">
-                  <KeyRound size={14} className="text-blue-400" />
-                  <input type="password" placeholder="مفتاح المسؤول" className="w-36 rounded-lg border border-white/15 bg-white/10 text-white placeholder:text-white/30 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/50 focus:border-transparent" value={adminKey} onChange={(e) => setAdminKey(e.target.value)} />
-                </label>
                 {backupMsg && <span className={`text-sm font-medium ${backupMsg.type === "ok" ? "text-emerald-400" : "text-rose-400"}`}>{backupMsg.text}</span>}
                 <button type="button" className="flex items-center gap-1.5 rounded-lg border border-amber-400/60 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-500/20 transition-colors cursor-pointer" onClick={handleBackupDb}>
                   <Database size={14} /> نسخة احتياطية

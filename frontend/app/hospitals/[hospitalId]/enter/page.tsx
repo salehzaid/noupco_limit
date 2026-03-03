@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Search, ArrowRight, ShieldCheck, Lock, Unlock, AlertCircle } from "lucide-react";
+import { getApiBase } from "@/app/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8011";
+const API = getApiBase();
 
 type DeptPin = { department_id: number; department_name: string; has_pin: boolean };
 

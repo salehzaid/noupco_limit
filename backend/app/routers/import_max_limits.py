@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.crud.audit import log_max_limit_change
@@ -69,6 +69,7 @@ def _error_response(
         "departments_linked": kwargs.get("departments_linked", 0),
         "departments_total": kwargs.get("departments_total", 0),
         "rows_read": rows_read,
+        "limits_deleted_before_import": kwargs.get("limits_deleted_before_import", 0),
         "limits_upserted": kwargs.get("limits_upserted", 0),
         "missing_items": kwargs.get("missing_items", 0),
         "created_items": kwargs.get("created_items", 0),
@@ -83,13 +84,22 @@ def import_max_limits_master(
     file: UploadFile = File(..., description="Excel file (.xlsx) with sheet 'المجموع'"),
     effective_year: int = Query(2025, description="Year for effective_year"),
     dry_run: bool = Query(False, description="If true, do not commit changes"),
+    replace_existing: bool = Query(False, description="If true, delete current hospital limits for the same year before import"),
     create_missing_items: bool = Query(True, description="If true, create placeholder Item for unknown codes"),
     hospital_id: int | None = Query(None, description="If provided, link all created/matched departments to this hospital"),
     db: Session = Depends(get_db),
     _: None = Depends(require_admin_key),
 ):
     try:
-        return _import_max_limits_master_impl(file, effective_year, dry_run, create_missing_items, db, hospital_id=hospital_id)
+        return _import_max_limits_master_impl(
+            file,
+            effective_year,
+            dry_run,
+            replace_existing,
+            create_missing_items,
+            db,
+            hospital_id=hospital_id,
+        )
     except Exception as e:
         import traceback
         db.rollback()
@@ -104,6 +114,7 @@ def _import_max_limits_master_impl(
     file: UploadFile,
     effective_year: int,
     dry_run: bool,
+    replace_existing: bool,
     create_missing_items: bool,
     db: Session,
     hospital_id: int | None = None,
@@ -122,7 +133,16 @@ def _import_max_limits_master_impl(
     created_items_count = 0
     skipped_values_count = 0
     invalid_values_count = 0
+    limits_deleted_before_import = 0
     errors_sample: list[str] = []
+
+    if replace_existing and hospital_id is None:
+        return _error_response(
+            effective_year,
+            dry_run,
+            ["replace_existing=true requires hospital_id"],
+            rows_read=0,
+        )
 
     # Find required columns and department columns
     required_set = set(REQUIRED_HEADERS)
@@ -164,6 +184,33 @@ def _import_max_limits_master_impl(
             if dept_obj and dept_obj.hospital_id is None:
                 dept_obj.hospital_id = hospital_id
                 departments_linked += 1
+
+    if replace_existing and hospital_id is not None:
+        dept_ids = [
+            r[0]
+            for r in db.execute(
+                select(Department.id).where(Department.hospital_id == hospital_id)
+            ).all()
+        ]
+        if dept_ids:
+            limits_deleted_before_import = (
+                db.execute(
+                    select(func.count())
+                    .select_from(DepartmentMaxLimit)
+                    .where(
+                        DepartmentMaxLimit.department_id.in_(dept_ids),
+                        DepartmentMaxLimit.effective_year == effective_year,
+                    )
+                ).scalar()
+                or 0
+            )
+            if limits_deleted_before_import:
+                db.execute(
+                    delete(DepartmentMaxLimit).where(
+                        DepartmentMaxLimit.department_id.in_(dept_ids),
+                        DepartmentMaxLimit.effective_year == effective_year,
+                    )
+                )
 
     limits_upserted = 0
     BATCH = 200
@@ -232,6 +279,7 @@ def _import_max_limits_master_impl(
         "departments_linked": departments_linked,
         "departments_total": len(dept_map),
         "rows_read": len(df),
+        "limits_deleted_before_import": limits_deleted_before_import,
         "limits_upserted": limits_upserted,
         "missing_items": missing_items_count,
         "created_items": created_items_count,

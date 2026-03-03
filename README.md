@@ -46,7 +46,7 @@ psql -d postgres -c "CREATE DATABASE nupco_limit;"
 ```bash
 # From repo root
 cp backend/.env.example backend/.env
-# Edit backend/.env: set DATABASE_URL, and optionally APP_ENV=local, ADMIN_KEY=change-me
+# Edit backend/.env: set DATABASE_URL, and optionally APP_ENV=local
 
 cd backend
 source .venv/bin/activate
@@ -85,7 +85,7 @@ Open **http://localhost:1111**. Main app page: **http://localhost:1111/hospitals
 |-------|----------|-------------|
 | **backend/.env** | `DATABASE_URL` | PostgreSQL URL, e.g. `postgresql://user:pass@localhost:5432/nupco_limit` |
 | **backend/.env** | `APP_ENV` | Set to `local` to enable DB backup; leave unset in production |
-| **backend/.env** | `ADMIN_KEY` | Optional. If set, import and admin endpoints require header `X-Admin-Key` with this value |
+| **backend/.env** | `ADMIN_KEY` | Optional (currently ignored; admin-key checks are disabled) |
 | **frontend/.env.local** | `NEXT_PUBLIC_API_URL` | Backend URL, default `http://127.0.0.1:8011` |
 
 ---
@@ -96,8 +96,7 @@ Open **http://localhost:1111**. Main app page: **http://localhost:1111/hospitals
 - **Search** — filter by item code/description.
 - **Export Excel** — download limits for the selected department (and search).
 - **Import Excel** — upload file → preview table → Confirm to apply (or Cancel).
-- **Admin key** — input (stored in localStorage); required for Backup and Import when `ADMIN_KEY` is set on the backend.
-- **Backup DB** — download `.sql` dump (when `APP_ENV=local` and admin key is valid).
+- **Backup DB** — download `.sql` dump (when `APP_ENV=local`).
 - **Audit** — open modal with last 50 changes for the selected department.
 - **Table** — inline edit quantity; expand row for alternatives and set limits there.
 - **Add new item** — search item, set max qty; optional alternatives with limits.
@@ -106,7 +105,7 @@ Open **http://localhost:1111**. Main app page: **http://localhost:1111/hospitals
 
 ## Safety notes
 
-- **Admin key:** When `ADMIN_KEY` is set, all `/api/import/*` and `/api/admin/*` requests must send `X-Admin-Key`. Use the input on `/hospitals/1/departments/1/limits` (or curl `-H "X-Admin-Key: your-key"`).
+- **Access control:** Admin-key checks are currently disabled, so import/admin endpoints are open in this phase.
 - **Local-first:** Backup and “local-only” behaviour are gated by `APP_ENV=local`. Do not set that in production.
 - **Backup:** Take a DB backup (Backup DB or `curl` to `/api/admin/db-backup`) before bulk imports or restore.
 

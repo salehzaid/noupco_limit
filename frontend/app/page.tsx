@@ -82,7 +82,7 @@ export default function Home() {
                 <p className="text-red-300 text-sm" data-testid="health-error">{error}</p>
               </div>
               <p className="text-blue-300/40 text-xs mb-3">
-                تأكد أن Backend يعمل على {getApiBase()}
+                تأكد أن Backend يعمل على {getApiBase() || "/api"}
               </p>
               <button
                 onClick={checkHealth}

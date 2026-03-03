@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Activity, TrendingUp, Clock, BarChart3 } from "lucide-react";
+import { getApiBase } from "@/app/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8011";
+const API = getApiBase();
 
 type DeptChange = { department_id: number; department_name: string; changes: number };
 type RecentChange = { created_at: string | null; department_name: string; generic_item_number: string; action: string; old_quantity: number | null; new_quantity: number | null; source: string };

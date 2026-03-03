@@ -37,12 +37,11 @@ psql -d postgres -c "CREATE DATABASE nupco_limit;"
 # From backend/
 echo 'DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nupco_limit' > .env
 echo 'APP_ENV=local' >> .env
-echo 'ADMIN_KEY=change-me' >> .env
 ```
 
 Edit `.env` if your username, password, or database name differ.  
 - `APP_ENV=local`: enables DB backup.  
-- `ADMIN_KEY`: if set, requests to `/api/import/*` and `/api/admin/*` must send header `X-Admin-Key` with this value.
+- `ADMIN_KEY`: currently ignored (admin-key checks are disabled).
 
 ## 5. Run migrations
 
@@ -87,11 +86,10 @@ Use `--file path/to/file.xlsx` if the file is elsewhere.
 
 ### b) Import max-limits-master (creates departments + limits)
 
-Uploads an Excel file with sheet **"المجموع"**. Creates departments from column headers and upserts `department_max_limits`. Requires admin key if `ADMIN_KEY` is set.
+Uploads an Excel file with sheet **"المجموع"**. Creates departments from column headers and upserts `department_max_limits`.
 
 ```bash
 curl -X POST "http://127.0.0.1:8011/api/import/max-limits-master?effective_year=2025&dry_run=false&create_missing_items=true" \
-  -H "X-Admin-Key: change-me" \
   -F "file=@/path/to/الحد الاعلى الماستر حوطة سدير.xlsx"
 ```
 
@@ -104,12 +102,10 @@ Updates one department from an Excel file with columns **Generic Item Number** a
 ```bash
 # Dry run (preview, no writes)
 curl -X POST "http://127.0.0.1:8011/api/import/department-max-limits?department_id=1&effective_year=2025&dry_run=true" \
-  -H "X-Admin-Key: change-me" \
   -F "file=@/path/to/department_1_max_limits_2025.xlsx"
 
 # Apply
 curl -X POST "http://127.0.0.1:8011/api/import/department-max-limits?department_id=1&effective_year=2025&dry_run=false" \
-  -H "X-Admin-Key: change-me" \
   -F "file=@/path/to/department_1_max_limits_2025.xlsx"
 ```
 
@@ -130,11 +126,10 @@ Optional search: `&q=LANCET`.
 
 ### b) DB backup (SQL dump)
 
-Requires `pg_dump` (e.g. `brew install postgresql` or Postgres.app). Allowed when `APP_ENV=local`. Requires admin key if `ADMIN_KEY` is set.
+Requires `pg_dump` (e.g. `brew install postgresql` or Postgres.app). Allowed when `APP_ENV=local`.
 
 ```bash
-curl -o nupco_limit_backup.sql -H "X-Admin-Key: change-me" \
-  "http://127.0.0.1:8011/api/admin/db-backup"
+curl -o nupco_limit_backup.sql "http://127.0.0.1:8011/api/admin/db-backup"
 ```
 
 ---
@@ -155,14 +150,9 @@ curl -s "http://127.0.0.1:8011/api/audit/max-limits?department_id=1&limit=5"
 
 If the frontend (e.g. localhost:1111) cannot call the backend (127.0.0.1:8011), the backend allows `localhost:1111` and `127.0.0.1:1111`. Ensure the frontend uses one of these origins and that `NEXT_PUBLIC_API_URL` points at `http://127.0.0.1:8011` (or the same host the browser uses). If you use another port or domain, add it in `app/main.py` in `CORSMiddleware` `allow_origins`.
 
-### 403 Admin key
+### Access control note
 
-- **Symptom:** 403 when calling Backup or Import (from UI or curl).  
-- **Cause:** `ADMIN_KEY` is set in `backend/.env`, but the request did not send a matching `X-Admin-Key` header.  
-- **Fix:**  
-  - In the UI: enter the same value as `ADMIN_KEY` in the "Admin key" field on `/hospitals/1/departments/1/limits` (it is stored in localStorage).
-  - For curl: add `-H "X-Admin-Key: your-actual-key"` (replace with the value in `.env`).  
-- If you want to disable the check locally, remove or comment out `ADMIN_KEY` in `.env` and restart the server; then endpoints are allowed when `APP_ENV=local` without a key.
+- Admin-key checks are currently disabled, so import/admin endpoints are open in this phase.
 
 ### pg_dump missing
 
@@ -172,7 +162,7 @@ If the frontend (e.g. localhost:1111) cannot call the backend (127.0.0.1:8011), 
   - **Homebrew:** `brew install postgresql`.  
   - **Postgres.app:** Install from [postgresapp.com](https://postgresapp.com/) and add to PATH, e.g. in `~/.zshrc`:  
     `export PATH="/Applications/Postgres.app/Contents/Versions/latest/bin:$PATH"`.  
-  Then ensure `APP_ENV=local` in `backend/.env` and, if set, send the correct `X-Admin-Key` header.
+  Then ensure `APP_ENV=local` in `backend/.env`.
 
 ### Missing or ambiguous codes in import
 
