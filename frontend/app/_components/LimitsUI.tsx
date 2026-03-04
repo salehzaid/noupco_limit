@@ -3,12 +3,37 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { LayoutGrid, Database, FileDown, FileUp, History, ChevronDown, Search, Plus, RefreshCw } from "lucide-react";
 import AiReportPanel from "@/app/_components/AiReportPanel";
-import { getApiBase } from "@/app/lib/api";
+import { getApiBase, formatApiError } from "@/app/lib/api";
 
 const API = getApiBase();
+const API_UPLOAD = API || "https://noupco-limit.onrender.com";
 const PAGE_SIZE = 50;
 const ALT_MODE_STORAGE_KEY = "nupco_limits_alternatives_mode";
 const CHANGED_ITEMS_STORAGE_PREFIX = "nupco_changed_items_dept_";
+
+type ApiErrorPayload = { detail?: string; message?: string; error?: string };
+
+async function readApiError(res: Response, fallback: string): Promise<string> {
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return "الخدمة غير متاحة حاليا (Gateway). حاول مرة أخرى بعد دقيقة.";
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const payload = (await res.json().catch(() => null)) as ApiErrorPayload | null;
+    const message = payload?.detail || payload?.message || payload?.error;
+    if (message && message.trim()) return message.trim();
+    return `${fallback} (${res.status})`;
+  }
+
+  const bodyText = await res.text().catch(() => "");
+  const trimmed = bodyText.trim();
+  if (trimmed && !trimmed.startsWith("<!DOCTYPE") && !trimmed.startsWith("<html")) {
+    return trimmed.slice(0, 220);
+  }
+
+  return `${fallback} (${res.status})`;
+}
 
 type AltMode = "strict" | "balanced" | "wide";
 const ALT_MODE_CONFIG: Record<AltMode, { top_k: number; min_score_override?: number }> = {
@@ -228,11 +253,13 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
     if (!deptId) return; setImportLoading(true); if (!confirmImport) setImportResult(null);
     const form = new FormData(); form.append("file", file); const dryRun = !confirmImport;
     try {
-      const res = await fetch(`${API}/api/import/department-max-limits?department_id=${deptId}&effective_year=2025&dry_run=${dryRun}`, { method: "POST", body: form });
-      const data: ImportResult = await res.json();
+      const res = await fetch(`${API_UPLOAD}/api/import/department-max-limits?department_id=${deptId}&effective_year=2025&dry_run=${dryRun}`, { method: "POST", body: form });
+      if (!res.ok) throw new Error(await readApiError(res, "تعذر تنفيذ الاستيراد"));
+      const data = await res.json().catch(() => null) as ImportResult | null;
+      if (!data || typeof data !== "object") throw new Error("استجابة غير صالحة من الخادم");
       setImportResult(data);
       if (dryRun && data.preview_rows && data.preview_rows.length > 0) { setPendingImportFile(file); } else { setPendingImportFile(null); if (!data.dry_run && (data.upserted > 0 || data.deleted > 0)) refreshTable(); }
-    } catch (e) { setImportResult({ department_id: deptId, effective_year: 2025, dry_run: false, rows_read: 0, upserted: 0, deleted: 0, missing_items: 0, invalid_values: 0, prefix_matched: 0, ambiguous_codes: 0, errors_sample: [String(e)] }); setPendingImportFile(null); }
+    } catch (e) { setImportResult({ department_id: deptId, effective_year: 2025, dry_run: false, rows_read: 0, upserted: 0, deleted: 0, missing_items: 0, invalid_values: 0, prefix_matched: 0, ambiguous_codes: 0, errors_sample: [formatApiError(e, "تعذر تنفيذ الاستيراد")] }); setPendingImportFile(null); }
     finally { setImportLoading(false); if (!confirmImport && fileInputRef.current) fileInputRef.current.value = ""; }
   }, [deptId, refreshTable]);
 

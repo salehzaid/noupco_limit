@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { Building2, Upload, ArrowDownToLine, ArrowUpFromLine, KeyRound, Settings, Lock, Unlock, Info } from "lucide-react";
-import { getApiBase } from "@/app/lib/api";
+import { getApiBase, formatApiError } from "@/app/lib/api";
 
-const API = getApiBase();
+const API = getApiBase() || "https://noupco-limit.onrender.com";
 
 type HospitalProfile = { id: number; name: string; code: string | null; is_active: boolean; city: string | null; region: string | null; contact_name: string | null; contact_phone: string | null; notes: string | null };
 type Dept = { id: number; name: string };
@@ -26,6 +26,30 @@ type TabId = (typeof TABS)[number]["id"];
 
 const ACTION_STYLE: Record<string, string> = { insert: "bg-emerald-100 text-emerald-700", update: "bg-blue-100 text-blue-700", delete: "bg-red-100 text-red-700", missing: "bg-gray-100 text-gray-500", ambiguous: "bg-amber-100 text-amber-700", skip: "bg-gray-50 text-gray-400" };
 const ACTION_LABEL: Record<string, string> = { insert: "إضافة", update: "تحديث", delete: "حذف", missing: "مفقود", ambiguous: "ملتبس", skip: "تخطي" };
+
+type ApiErrorPayload = { detail?: string; message?: string; error?: string };
+
+async function readApiError(res: Response, fallback: string): Promise<string> {
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return "الخدمة غير متاحة حاليا (Gateway). حاول مرة أخرى بعد دقيقة.";
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const payload = (await res.json().catch(() => null)) as ApiErrorPayload | null;
+    const message = payload?.detail || payload?.message || payload?.error;
+    if (message && message.trim()) return message.trim();
+    return `${fallback} (${res.status})`;
+  }
+
+  const bodyText = await res.text().catch(() => "");
+  const trimmed = bodyText.trim();
+  if (trimmed && !trimmed.startsWith("<!DOCTYPE") && !trimmed.startsWith("<html")) {
+    return trimmed.slice(0, 220);
+  }
+
+  return `${fallback} (${res.status})`;
+}
 
 export default function AdminHubPage() {
   const params = useParams<{ hospitalId: string }>();
@@ -87,11 +111,11 @@ function ProfileTab({ hospitalId }: { hospitalId: string }) {
     setSaving(true); setMsg(null);
     try {
       const res = await fetch(`${API}/api/hospitals/${hospitalId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); setMsg({ type: "err", text: (e as { detail?: string }).detail || `تعذر الحفظ (${res.status})` }); return; }
+      if (!res.ok) { setMsg({ type: "err", text: await readApiError(res, "تعذر الحفظ") }); return; }
       const updated: HospitalProfile = await res.json();
       setProfile(updated); setEditing(false); setMsg({ type: "ok", text: "تم الحفظ" });
       setTimeout(() => setMsg(null), 3000);
-    } catch (e) { setMsg({ type: "err", text: String(e) }); } finally { setSaving(false); }
+    } catch (e) { setMsg({ type: "err", text: formatApiError(e, "تعذر الحفظ") }); } finally { setSaving(false); }
   };
 
   if (!profile) return <div className="text-gray-400 text-sm py-8 text-center">جارٍ التحميل…</div>;
@@ -169,11 +193,11 @@ function MasterImportTab({ hospitalId }: { hospitalId: string }) {
       const res = await fetch(`${API}/api/hospitals/${hospitalId}/max-limits?effective_year=${effectiveYear}`, {
         method: "DELETE",
       });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setClearMsg({ type: "err", text: (data as { detail?: string }).detail || `تعذر الحذف (${res.status})` });
+        setClearMsg({ type: "err", text: await readApiError(res, "تعذر الحذف") });
         return;
       }
+      const data = await res.json();
       const out = data as HospitalLimitsDeleteResult;
       setResult(null);
       setPendingFile(null);
@@ -182,7 +206,7 @@ function MasterImportTab({ hospitalId }: { hospitalId: string }) {
         text: `تم حذف ${out.deleted_limits.toLocaleString("ar-SA")} حد من ${out.departments_count.toLocaleString("ar-SA")} قسم`,
       });
     } catch (e) {
-      setClearMsg({ type: "err", text: String(e) });
+      setClearMsg({ type: "err", text: formatApiError(e, "تعذر الحذف") });
     } finally {
       setClearLoading(false);
     }
@@ -195,10 +219,12 @@ function MasterImportTab({ hospitalId }: { hospitalId: string }) {
     const form = new FormData(); form.append("file", file);
     try {
       const res = await fetch(`${API}/api/import/max-limits-master?effective_year=${effectiveYear}&dry_run=${dryRun}&hospital_id=${hospitalId}&replace_existing=${replaceExisting}`, { method: "POST", body: form });
-      const data: MasterImportResult = await res.json();
+      if (!res.ok) throw new Error(await readApiError(res, "تعذر تنفيذ الاستيراد"));
+      const data = await res.json().catch(() => null) as MasterImportResult | null;
+      if (!data || typeof data !== "object") throw new Error("استجابة غير صالحة من الخادم");
       setResult(data); setPendingFile(dryRun ? file : null);
     } catch (e) {
-      setResult({ effective_year: Number(effectiveYear), dry_run: dryRun, hospital_id: Number(hospitalId), departments_created: 0, departments_linked: 0, departments_total: 0, rows_read: 0, limits_deleted_before_import: 0, limits_upserted: 0, missing_items: 0, created_items: 0, skipped_values: 0, invalid_values: 0, errors_sample: [String(e)] });
+      setResult({ effective_year: Number(effectiveYear), dry_run: dryRun, hospital_id: Number(hospitalId), departments_created: 0, departments_linked: 0, departments_total: 0, rows_read: 0, limits_deleted_before_import: 0, limits_upserted: 0, missing_items: 0, created_items: 0, skipped_values: 0, invalid_values: 0, errors_sample: [formatApiError(e, "تعذر تنفيذ الاستيراد")] });
       setPendingFile(null);
     } finally { setLoading(false); if (dryRun && fileRef.current) fileRef.current.value = ""; }
   };
@@ -303,9 +329,11 @@ function DeptIOTab({ hospitalId }: { hospitalId: string }) {
     const form = new FormData(); form.append("file", file);
     try {
       const res = await fetch(`${API}/api/import/department-max-limits?department_id=${selectedDeptId}&effective_year=${effectiveYear}&dry_run=${dryRun}`, { method: "POST", body: form });
-      const data: DeptImportResult = await res.json();
+      if (!res.ok) throw new Error(await readApiError(res, "تعذر تنفيذ استيراد القسم"));
+      const data = await res.json().catch(() => null) as DeptImportResult | null;
+      if (!data || typeof data !== "object") throw new Error("استجابة غير صالحة من الخادم");
       setResult(data); setPendingFile(dryRun ? file : null);
-    } catch (e) { setResult({ department_id: selectedDeptId, effective_year: Number(effectiveYear), dry_run: dryRun, rows_read: 0, upserted: 0, deleted: 0, missing_items: 0, invalid_values: 0, errors_sample: [String(e)] }); setPendingFile(null);
+    } catch (e) { setResult({ department_id: selectedDeptId, effective_year: Number(effectiveYear), dry_run: dryRun, rows_read: 0, upserted: 0, deleted: 0, missing_items: 0, invalid_values: 0, errors_sample: [formatApiError(e, "تعذر تنفيذ استيراد القسم")] }); setPendingFile(null);
     } finally { setLoading(false); if (dryRun && fileRef.current) fileRef.current.value = ""; }
   };
 
@@ -317,11 +345,11 @@ function DeptIOTab({ hospitalId }: { hospitalId: string }) {
     setDeleteMsg(null);
     try {
       const res = await fetch(`${API}/api/hospitals/${hospitalId}/departments/${selectedDeptId}`, { method: "DELETE" });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setDeleteMsg({ type: "err", text: (data as { detail?: string }).detail || `تعذر حذف القسم (${res.status})` });
+        setDeleteMsg({ type: "err", text: await readApiError(res, "تعذر حذف القسم") });
         return;
       }
+      const data = await res.json();
       const out = data as DepartmentDeleteResult;
       setDeleteMsg({
         type: "ok",
@@ -332,7 +360,7 @@ function DeptIOTab({ hospitalId }: { hospitalId: string }) {
       setPendingFile(null);
       await loadDepartments();
     } catch (e) {
-      setDeleteMsg({ type: "err", text: String(e) });
+      setDeleteMsg({ type: "err", text: formatApiError(e, "تعذر حذف القسم") });
     } finally {
       setDeleteLoading(false);
     }
