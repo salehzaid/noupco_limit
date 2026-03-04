@@ -227,7 +227,13 @@ def _import_max_limits_master_impl(
         )
 
     # Department columns = all columns that are not one of the 3 required (we do not import facility column)
-    dept_columns = [str(c).strip() for c in df.columns if c not in required_set and str(c).strip()]
+    dept_columns = list(
+        dict.fromkeys(
+            str(c).strip()
+            for c in df.columns
+            if c not in required_set and str(c).strip()
+        )
+    )
 
     # Preload item map: generic_item_number -> id
     items = db.execute(select(Item.id, Item.generic_item_number)).all()
