@@ -12,28 +12,44 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const checkHealth = useCallback(() => {
+  const checkHealth = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const url = getApiBase();
-    fetchWithTimeout(`${url}/health`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const contentType = res.headers.get("content-type") || "";
-        if (!contentType.includes("application/json")) {
-          throw new Error("استجابة غير صالحة من الخادم");
+    const endpoint = `${getApiBase()}/health`;
+
+    try {
+      let lastError: unknown = null;
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const timeoutMs = attempt === 0 ? 25000 : 45000;
+          const res = await fetchWithTimeout(endpoint, { timeoutMs, cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+          const contentType = res.headers.get("content-type") || "";
+          if (!contentType.includes("application/json")) {
+            throw new Error("استجابة غير صالحة من الخادم");
+          }
+
+          const data = await res.json();
+          setHealth(data);
+          setError(null);
+          return;
+        } catch (err) {
+          lastError = err;
+          if (attempt === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
         }
-        return res.json();
-      })
-      .then((data) => {
-        setHealth(data);
-        setError(null);
-      })
-      .catch((err) => {
-        setError(formatApiError(err, "تعذر الوصول إلى واجهة البرمجة"));
-        setHealth(null);
-      })
-      .finally(() => setLoading(false));
+      }
+
+      throw lastError;
+    } catch (err) {
+      setError(formatApiError(err, "تعذر الوصول إلى واجهة البرمجة"));
+      setHealth(null);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { checkHealth(); }, [checkHealth]);
