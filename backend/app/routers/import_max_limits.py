@@ -8,19 +8,22 @@ from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.crud.audit import log_max_limit_change
 from app.database import get_db
 from app.dependencies import require_admin_key
-from app.models import Department, DepartmentMaxLimit, Item
+from app.models import Department, DepartmentMaxLimit, FacilityMaxLimit, Item
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
 SHEET_NAME = "المجموع"
 REQUIRED_HEADERS = ["كود نوبكو", "Desc", "الحد الأعلى للمستشفى 2025"]
 MAX_ERROR_SAMPLE = 20
+MASTER_UPSERT_BATCH_SIZE = 2000
+MASTER_TRIGGER_NAME = "trg_department_max_limits_facility_recalc"
 
 
 def _normalize_code(val: Any) -> str | None:
@@ -52,6 +55,74 @@ def _parse_cell_value(val: Any) -> tuple[int | None, bool, bool]:
         return n, False, False
     except (ValueError, TypeError):
         return None, False, True
+
+
+def _chunked(rows: list[dict[str, Any]], size: int):
+    for i in range(0, len(rows), size):
+        yield rows[i : i + size]
+
+
+def _set_master_trigger_state(db: Session, enabled: bool) -> bool:
+    action = "ENABLE" if enabled else "DISABLE"
+    db.execute(
+        text(
+            f"ALTER TABLE department_max_limits {action} TRIGGER {MASTER_TRIGGER_NAME}"
+        )
+    )
+    return True
+
+
+def _recompute_facility_totals(
+    db: Session,
+    item_ids: list[int],
+    effective_year: int,
+) -> None:
+    if not item_ids:
+        return
+
+    sums = db.execute(
+        select(
+            DepartmentMaxLimit.item_id,
+            func.sum(DepartmentMaxLimit.max_quantity).label("total_max_quantity"),
+        )
+        .where(
+            DepartmentMaxLimit.item_id.in_(item_ids),
+            DepartmentMaxLimit.effective_year == effective_year,
+        )
+        .group_by(DepartmentMaxLimit.item_id)
+    ).all()
+
+    payload = [
+        {
+            "item_id": r.item_id,
+            "total_max_quantity": int(r.total_max_quantity or 0),
+            "effective_year": effective_year,
+        }
+        for r in sums
+    ]
+
+    summed_item_ids = {r["item_id"] for r in payload}
+    stale_item_ids = [item_id for item_id in item_ids if item_id not in summed_item_ids]
+
+    if payload:
+        stmt = pg_insert(FacilityMaxLimit).values(payload)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[FacilityMaxLimit.item_id],
+            set_={
+                "total_max_quantity": stmt.excluded.total_max_quantity,
+                "effective_year": stmt.excluded.effective_year,
+                "updated_at": func.now(),
+            },
+        )
+        db.execute(stmt)
+
+    if stale_item_ids:
+        db.execute(
+            delete(FacilityMaxLimit).where(
+                FacilityMaxLimit.item_id.in_(stale_item_ids),
+                FacilityMaxLimit.effective_year == effective_year,
+            )
+        )
 
 
 def _error_response(
@@ -156,35 +227,63 @@ def _import_max_limits_master_impl(
         )
 
     # Department columns = all columns that are not one of the 3 required (we do not import facility column)
-    dept_columns = [c for c in df.columns if c not in required_set]
+    dept_columns = [str(c).strip() for c in df.columns if c not in required_set and str(c).strip()]
 
     # Preload item map: generic_item_number -> id
     items = db.execute(select(Item.id, Item.generic_item_number)).all()
     item_map: dict[str, int] = {str(r.generic_item_number).strip(): r.id for r in items}
 
-    # Preload and upsert departments by name; optionally link them to a hospital
-    existing_depts = db.execute(select(Department)).scalars().all()
-    dept_map: dict[str, int] = {r.name: r.id for r in existing_depts}
-    departments_created = 0
-    departments_linked = 0  # existing depts that were linked to hospital for the first time
+    # Preload departments by name
+    existing_depts = db.execute(select(Department.id, Department.name, Department.hospital_id)).all()
+    dept_map: dict[str, int] = {str(r.name).strip(): r.id for r in existing_depts if r.name}
+    dept_hospital_map: dict[str, int | None] = {
+        str(r.name).strip(): r.hospital_id for r in existing_depts if r.name
+    }
 
-    for name in dept_columns:
-        if not name or not str(name).strip():
-            continue
-        name = str(name).strip()
-        if name not in dept_map:
+    new_dept_names = [name for name in dept_columns if name not in dept_map]
+    linkable_dept_ids = [
+        dept_map[name]
+        for name in dept_columns
+        if hospital_id is not None and name in dept_map and dept_hospital_map.get(name) is None
+    ]
+
+    departments_created = len(new_dept_names) if dry_run else 0
+    departments_linked = len(linkable_dept_ids) if dry_run else 0
+
+    # In dry-run we do not persist, but we still need department IDs for counting/upsert simulation.
+    if dry_run:
+        temp_dept_id = -1
+        for name in new_dept_names:
+            dept_map[name] = temp_dept_id
+            temp_dept_id -= 1
+    else:
+        # Try to disable expensive per-row recalc trigger for bulk import.
+        trigger_disabled = False
+        try:
+            _set_master_trigger_state(db, enabled=False)
+            trigger_disabled = True
+        except Exception:
+            db.rollback()
+
+        for name in new_dept_names:
             dept = Department(name=name, is_active=True, hospital_id=hospital_id)
             db.add(dept)
             db.flush()
             dept_map[name] = dept.id
             departments_created += 1
-        elif hospital_id is not None:
-            # Link existing department to this hospital if not already linked
-            dept_obj = db.execute(select(Department).where(Department.id == dept_map[name])).scalar_one_or_none()
-            if dept_obj and dept_obj.hospital_id is None:
-                dept_obj.hospital_id = hospital_id
-                departments_linked += 1
 
+        if hospital_id is not None and linkable_dept_ids:
+            db.execute(
+                update(Department)
+                .where(
+                    Department.id.in_(linkable_dept_ids),
+                    Department.hospital_id.is_(None),
+                )
+                .values(hospital_id=hospital_id)
+            )
+            departments_linked = len(linkable_dept_ids)
+
+    deleted_item_ids: set[int] = set()
     if replace_existing and hospital_id is not None:
         dept_ids = [
             r[0]
@@ -204,36 +303,54 @@ def _import_max_limits_master_impl(
                 ).scalar()
                 or 0
             )
+
             if limits_deleted_before_import:
-                db.execute(
-                    delete(DepartmentMaxLimit).where(
-                        DepartmentMaxLimit.department_id.in_(dept_ids),
-                        DepartmentMaxLimit.effective_year == effective_year,
-                    )
+                deleted_item_ids = set(
+                    db.execute(
+                        select(DepartmentMaxLimit.item_id)
+                        .where(
+                            DepartmentMaxLimit.department_id.in_(dept_ids),
+                            DepartmentMaxLimit.effective_year == effective_year,
+                        )
+                        .distinct()
+                    ).scalars()
                 )
 
-    limits_upserted = 0
-    BATCH = 200
-    to_upsert: list[tuple[int, int, int]] = []
+                if not dry_run:
+                    db.execute(
+                        delete(DepartmentMaxLimit).where(
+                            DepartmentMaxLimit.department_id.in_(dept_ids),
+                            DepartmentMaxLimit.effective_year == effective_year,
+                        )
+                    )
+
+    upsert_map: dict[tuple[int, int], int] = {}
 
     for _, row in df.iterrows():
         code = _normalize_code(row.get("كود نوبكو"))
         if not code:
             continue
+
         item_id = item_map.get(code)
         if item_id is None:
             if create_missing_items:
-                desc = row.get("Desc")
-                if desc is None or (isinstance(desc, float) and pd.isna(desc)):
-                    desc = ""
+                if dry_run:
+                    temp_item_id = -(len(item_map) + 1)
+                    item_map[code] = temp_item_id
+                    item_id = temp_item_id
+                    created_items_count += 1
                 else:
-                    desc = str(desc).strip()[:512] if desc else ""
-                new_item = Item(generic_item_number=code, generic_description=desc or None)
-                db.add(new_item)
-                db.flush()
-                item_map[code] = new_item.id
-                created_items_count += 1
-                item_id = new_item.id
+                    desc = row.get("Desc")
+                    if desc is None or (isinstance(desc, float) and pd.isna(desc)):
+                        desc = ""
+                    else:
+                        desc = str(desc).strip()[:512] if desc else ""
+                    new_item = Item(generic_item_number=code, generic_description=desc or None)
+                    db.add(new_item)
+                    db.flush()
+                    item_map[code] = new_item.id
+                    item_id = new_item.id
+                    created_items_count += 1
             else:
                 missing_items_count += 1
                 if len(errors_sample) < MAX_ERROR_SAMPLE:
@@ -253,22 +370,53 @@ def _import_max_limits_master_impl(
                 continue
             if n is None:
                 continue
-            dept_id = dept_map.get(str(col).strip())
+
+            dept_id = dept_map.get(col)
             if dept_id is None:
                 continue
-            to_upsert.append((item_id, dept_id, n))
-            if len(to_upsert) >= BATCH:
-                _flush_upserts(db, to_upsert, effective_year, dry_run=dry_run)
-                limits_upserted += len(to_upsert)
-                to_upsert = []
+            upsert_map[(item_id, dept_id)] = n
 
-    if to_upsert:
-        _flush_upserts(db, to_upsert, effective_year, dry_run=dry_run)
-        limits_upserted += len(to_upsert)
+    if not dry_run:
+        rows_payload = [
+            {
+                "item_id": item_id,
+                "department_id": department_id,
+                "max_quantity": max_quantity,
+                "effective_year": effective_year,
+                "source": "seed_excel",
+            }
+            for (item_id, department_id), max_quantity in upsert_map.items()
+        ]
 
-    if dry_run:
-        db.rollback()
-    else:
+        for chunk in _chunked(rows_payload, MASTER_UPSERT_BATCH_SIZE):
+            stmt = pg_insert(DepartmentMaxLimit).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    DepartmentMaxLimit.item_id,
+                    DepartmentMaxLimit.department_id,
+                    DepartmentMaxLimit.effective_year,
+                ],
+                set_={
+                    "max_quantity": stmt.excluded.max_quantity,
+                    "source": "seed_excel",
+                    "updated_at": func.now(),
+                },
+            )
+            db.execute(stmt)
+
+        affected_item_ids = sorted(
+            set(item_id for item_id, _ in upsert_map.keys()) | deleted_item_ids
+        )
+        _recompute_facility_totals(db, affected_item_ids, effective_year)
+
+        # Re-enable trigger if disabling succeeded.
+        if trigger_disabled:
+            try:
+                _set_master_trigger_state(db, enabled=True)
+            except Exception:
+                db.rollback()
+                raise
+
         db.commit()
 
     return {
@@ -280,48 +428,13 @@ def _import_max_limits_master_impl(
         "departments_total": len(dept_map),
         "rows_read": len(df),
         "limits_deleted_before_import": limits_deleted_before_import,
-        "limits_upserted": limits_upserted,
+        "limits_upserted": len(upsert_map),
         "missing_items": missing_items_count,
         "created_items": created_items_count,
         "skipped_values": skipped_values_count,
         "invalid_values": invalid_values_count,
         "errors_sample": errors_sample[:MAX_ERROR_SAMPLE],
     }
-
-
-def _flush_upserts(db: Session, rows: list[tuple[int, int, int]], effective_year: int, dry_run: bool = False) -> None:
-    for item_id, department_id, max_quantity in rows:
-        existing = db.execute(
-            select(DepartmentMaxLimit).where(
-                DepartmentMaxLimit.item_id == item_id,
-                DepartmentMaxLimit.department_id == department_id,
-                DepartmentMaxLimit.effective_year == effective_year,
-            )
-        ).scalar_one_or_none()
-        if existing:
-            if not dry_run:
-                log_max_limit_change(
-                    db, item_id, department_id, effective_year,
-                    "update", existing.max_quantity, max_quantity, "seed_excel",
-                )
-            existing.max_quantity = max_quantity
-            existing.source = "seed_excel"
-        else:
-            if not dry_run:
-                log_max_limit_change(
-                    db, item_id, department_id, effective_year,
-                    "insert", None, max_quantity, "seed_excel",
-                )
-            db.add(
-                DepartmentMaxLimit(
-                    item_id=item_id,
-                    department_id=department_id,
-                    max_quantity=max_quantity,
-                    effective_year=effective_year,
-                    source="seed_excel",
-                )
-            )
-    db.flush()
 
 
 # --- Department-specific import (Excel format matches export) ---
