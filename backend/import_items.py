@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import SessionLocal
 from app.models import Item
@@ -46,12 +47,23 @@ def normalize_item_number(val) -> str | None:
     return s if s else None
 
 
+def _chunked(rows: list[dict], size: int):
+    for i in range(0, len(rows), size):
+        yield rows[i : i + size]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Import items from Excel into items table")
     parser.add_argument(
         "--file",
         default="../NUPCO_Clinical_Details_20260215_185552.xlsx",
         help="Path to Excel file (default: ../NUPCO_Clinical_Details_20260215_185552.xlsx)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1000,
+        help="Batch size for bulk upsert (default: 1000)",
     )
     args = parser.parse_args()
     path = Path(args.file).resolve()
@@ -68,9 +80,8 @@ def main():
 
     desc_col = COL_DESCRIPTION if COL_DESCRIPTION in df.columns else None
     total = len(df)
-    inserted = 0
-    updated = 0
     skipped = 0
+    rows_by_code: dict[str, dict] = {}
 
     db = SessionLocal()
     try:
@@ -92,17 +103,48 @@ def main():
                 max_len = 1024 if model_attr == "detailed_use" else 255
                 clinical[model_attr] = _clean_str(row.get(excel_col), max_len) if excel_col in df.columns else None
 
-            existing = db.execute(select(Item).where(Item.generic_item_number == num)).scalar_one_or_none()
-            if existing:
-                existing.generic_description = desc
-                for attr, val in clinical.items():
-                    setattr(existing, attr, val)
-                db.commit()
-                updated += 1
-            else:
-                db.add(Item(generic_item_number=num, generic_description=desc, **clinical))
-                db.commit()
-                inserted += 1
+            rows_by_code[num] = {
+                "generic_item_number": num,
+                "generic_description": desc,
+                **clinical,
+            }
+
+        if not rows_by_code:
+            print("Import summary:")
+            print(f"  Total rows read:  {total}")
+            print("  Inserted:        0")
+            print("  Updated:         0")
+            print(f"  Skipped/invalid:  {skipped}")
+            return 0
+
+        codes = list(rows_by_code.keys())
+        existing_codes = set(
+            db.execute(
+                select(Item.generic_item_number).where(Item.generic_item_number.in_(codes))
+            ).scalars().all()
+        )
+
+        payload = list(rows_by_code.values())
+        for chunk in _chunked(payload, max(1, args.batch_size)):
+            stmt = pg_insert(Item).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[Item.generic_item_number],
+                set_={
+                    "generic_description": stmt.excluded.generic_description,
+                    "category_ar": stmt.excluded.category_ar,
+                    "clinical_use": stmt.excluded.clinical_use,
+                    "clinical_category": stmt.excluded.clinical_category,
+                    "specialty_tags": stmt.excluded.specialty_tags,
+                    "item_family_group": stmt.excluded.item_family_group,
+                    "detailed_use": stmt.excluded.detailed_use,
+                },
+            )
+            db.execute(stmt)
+
+        db.commit()
+
+        inserted = sum(1 for code in rows_by_code if code not in existing_codes)
+        updated = len(rows_by_code) - inserted
     finally:
         db.close()
 

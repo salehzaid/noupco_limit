@@ -513,6 +513,8 @@ def get_item_alternatives(
 
     recommended = _recommended_min_score(item)
     effective_min = min_score if min_score is not None else recommended
+    source_desc_tokens = _tokenize(item.generic_description)
+    source_detail_tokens = _tokenize(item.detailed_use)
 
     # Build candidate filter: must share at least one clinical signal
     filters = []
@@ -525,26 +527,55 @@ def get_item_alternatives(
     if item.item_family_group:
         filters.append(Item.item_family_group == item.item_family_group)
 
-    if not filters:
-        return AlternativesResponse(recommended_min_score=recommended, alternatives=[])
+    fallback_mode = False
+    candidate_stmt = select(Item).where(Item.id != item_id)
+    if filters:
+        candidate_stmt = candidate_stmt.where(or_(*filters))
+    else:
+        # Metadata may be sparse after base imports; fallback to text/code similarity.
+        fallback_mode = True
+        fallback_filters = []
+
+        item_code = (item.generic_item_number or "").strip()
+        code_prefix = item_code[:6] if len(item_code) >= 6 else item_code[:4]
+        if code_prefix:
+            fallback_filters.append(Item.generic_item_number.like(f"{code_prefix}%"))
+
+        item_desc = (item.generic_description or "").strip()
+        first_word = item_desc.split()[0].lower() if item_desc else ""
+        if len(first_word) >= 3:
+            fallback_filters.append(Item.generic_description.ilike(f"{first_word}%"))
+
+        sorted_tokens = sorted(source_desc_tokens | source_detail_tokens, key=len, reverse=True)
+        for token in sorted_tokens:
+            if len(token) < 3:
+                continue
+            fallback_filters.append(Item.generic_description.ilike(f"%{token}%"))
+            if len(fallback_filters) >= 6:
+                break
+
+        if not fallback_filters:
+            return AlternativesResponse(recommended_min_score=recommended, alternatives=[])
+
+        candidate_stmt = candidate_stmt.where(or_(*fallback_filters))
 
     candidates = (
-        db.execute(
-            select(Item)
-            .where(Item.id != item_id)
-            .where(or_(*filters))
-        )
+        db.execute(candidate_stmt.limit(500))
         .scalars()
         .all()
     )
 
-    source_desc_tokens = _tokenize(item.generic_description)
-    source_detail_tokens = _tokenize(item.detailed_use)
+    if not candidates:
+        return AlternativesResponse(recommended_min_score=recommended, alternatives=[])
+
+    threshold = effective_min
+    if fallback_mode and min_score is None:
+        threshold = min(effective_min, 30)
 
     scored = []
     for cand in candidates:
         s, reasons = _score_candidate(item, cand, source_desc_tokens, source_detail_tokens)
-        if s >= effective_min:
+        if s >= threshold:
             scored.append((cand, s, reasons))
 
     scored.sort(key=lambda x: x[1], reverse=True)
