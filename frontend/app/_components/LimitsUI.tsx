@@ -6,7 +6,6 @@ import AiReportPanel from "@/app/_components/AiReportPanel";
 import { getApiBase, formatApiError } from "@/app/lib/api";
 
 const API = getApiBase();
-const API_UPLOAD = API || "https://noupco-limit.onrender.com";
 const PAGE_SIZE = 50;
 const ALT_MODE_STORAGE_KEY = "nupco_limits_alternatives_mode";
 const CHANGED_ITEMS_STORAGE_PREFIX = "nupco_changed_items_dept_";
@@ -253,7 +252,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
     if (!deptId) return; setImportLoading(true); if (!confirmImport) setImportResult(null);
     const form = new FormData(); form.append("file", file); const dryRun = !confirmImport;
     try {
-      const res = await fetch(`${API_UPLOAD}/api/import/department-max-limits?department_id=${deptId}&effective_year=2025&dry_run=${dryRun}`, { method: "POST", body: form });
+      const res = await fetch(`${API}/api/import/department-max-limits?department_id=${deptId}&effective_year=2025&dry_run=${dryRun}`, { method: "POST", body: form });
       if (!res.ok) throw new Error(await readApiError(res, "تعذر تنفيذ الاستيراد"));
       const data = await res.json().catch(() => null) as ImportResult | null;
       if (!data || typeof data !== "object") throw new Error("استجابة غير صالحة من الخادم");

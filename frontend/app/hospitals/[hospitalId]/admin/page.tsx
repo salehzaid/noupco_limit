@@ -6,7 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Building2, Upload, ArrowDownToLine, ArrowUpFromLine, KeyRound, Settings, Lock, Unlock, Info } from "lucide-react";
 import { getApiBase, formatApiError } from "@/app/lib/api";
 
-const API = getApiBase() || "https://noupco-limit.onrender.com";
+const API = getApiBase();
 
 type HospitalProfile = { id: number; name: string; code: string | null; is_active: boolean; city: string | null; region: string | null; contact_name: string | null; contact_phone: string | null; notes: string | null };
 type Dept = { id: number; name: string };
