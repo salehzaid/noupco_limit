@@ -375,6 +375,11 @@ def search_items(
 
 _WORD_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
 _GAUGE_RE = re.compile(r"\b(\d+)G\b", re.IGNORECASE)
+_GENERIC_CLINICAL_USE = {"استخدام عام", "general use", "general"}
+_GENERIC_SPECIALTY = {"عام", "general"}
+_GENERIC_CATEGORY = {"مستهلكات عامة", "عام", "general"}
+_GENERIC_CLINICAL_CATEGORY = {"أخرى", "اخرى", "other"}
+_GENERIC_FAMILY = {"medicalsupplies", "general"}
 
 
 def _extract_gauge(desc: str | None) -> str | None:
@@ -395,6 +400,15 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+def _is_informative(value: str | None, generic_values: set[str]) -> bool:
+    if not value:
+        return False
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return False
+    return normalized not in generic_values
 
 
 def _score_candidate(
@@ -487,12 +501,24 @@ def _score_candidate(
 
 
 def _recommended_min_score(item: Item) -> int:
-    """Dynamic min_score based on metadata richness. Placeholder-like items use 35; rich items use 55."""
-    fields = [item.category_ar, item.clinical_use, item.clinical_category, item.specialty_tags]
-    count = sum(1 for f in fields if f and str(f).strip())
-    if count <= 1:
-        return 35  # placeholder-like, mostly empty
-    return 55  # at least 2–4 non-empty (filters weak matches like NEEDLE BLOOD COLLECTION at 35)
+    """Dynamic min_score based on informative metadata richness."""
+    informative_count = 0
+    if _is_informative(item.category_ar, _GENERIC_CATEGORY):
+        informative_count += 1
+    if _is_informative(item.clinical_use, _GENERIC_CLINICAL_USE):
+        informative_count += 1
+    if _is_informative(item.clinical_category, _GENERIC_CLINICAL_CATEGORY):
+        informative_count += 1
+    if _is_informative(item.specialty_tags, _GENERIC_SPECIALTY):
+        informative_count += 1
+    if _is_informative(item.item_family_group, _GENERIC_FAMILY):
+        informative_count += 1
+
+    if informative_count <= 1:
+        return 35
+    if informative_count == 2:
+        return 45
+    return 55
 
 
 @router.get("/items/{item_id}/alternatives", response_model=AlternativesResponse)
@@ -572,11 +598,15 @@ def get_item_alternatives(
     if fallback_mode and min_score is None:
         threshold = min(effective_min, 30)
 
-    scored = []
+    scored_all = []
     for cand in candidates:
         s, reasons = _score_candidate(item, cand, source_desc_tokens, source_detail_tokens)
-        if s >= threshold:
-            scored.append((cand, s, reasons))
+        scored_all.append((cand, s, reasons))
+
+    scored = [row for row in scored_all if row[1] >= threshold]
+    if not scored and min_score is None and not fallback_mode:
+        relaxed_threshold = min(threshold, 35)
+        scored = [row for row in scored_all if row[1] >= relaxed_threshold]
 
     scored.sort(key=lambda x: x[1], reverse=True)
 
