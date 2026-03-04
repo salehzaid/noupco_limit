@@ -239,6 +239,47 @@ def _import_max_limits_master_impl(
     items = db.execute(select(Item.id, Item.generic_item_number)).all()
     item_map: dict[str, int] = {str(r.generic_item_number).strip(): r.id for r in items}
 
+    # Build one description per code from file; used for bulk creation of missing items.
+    file_desc_by_code: dict[str, str | None] = {}
+    for _, row in df.iterrows():
+        code = _normalize_code(row.get("كود نوبكو"))
+        if not code or code in file_desc_by_code:
+            continue
+        desc = row.get("Desc")
+        if desc is None or (isinstance(desc, float) and pd.isna(desc)):
+            file_desc_by_code[code] = None
+        else:
+            normalized_desc = str(desc).strip()[:512] if str(desc).strip() else None
+            file_desc_by_code[code] = normalized_desc
+
+    missing_codes = [code for code in file_desc_by_code.keys() if code not in item_map]
+    if create_missing_items and missing_codes:
+        if dry_run:
+            temp_item_id = -1
+            for code in missing_codes:
+                item_map[code] = temp_item_id
+                temp_item_id -= 1
+            created_items_count += len(missing_codes)
+        else:
+            payload = [
+                {
+                    "generic_item_number": code,
+                    "generic_description": file_desc_by_code.get(code),
+                }
+                for code in missing_codes
+            ]
+            for chunk in _chunked(payload, 1000):
+                stmt = pg_insert(Item).values(chunk)
+                stmt = stmt.on_conflict_do_nothing(index_elements=[Item.generic_item_number])
+                db.execute(stmt)
+
+            refreshed_items = db.execute(
+                select(Item.id, Item.generic_item_number).where(Item.generic_item_number.in_(missing_codes))
+            ).all()
+            for r in refreshed_items:
+                item_map[str(r.generic_item_number).strip()] = r.id
+            created_items_count += len(missing_codes)
+
     # Preload departments by name
     existing_depts = db.execute(select(Department.id, Department.name, Department.hospital_id)).all()
     dept_map: dict[str, int] = {str(r.name).strip(): r.id for r in existing_depts if r.name}
@@ -339,29 +380,10 @@ def _import_max_limits_master_impl(
 
         item_id = item_map.get(code)
         if item_id is None:
-            if create_missing_items:
-                if dry_run:
-                    temp_item_id = -(len(item_map) + 1)
-                    item_map[code] = temp_item_id
-                    item_id = temp_item_id
-                    created_items_count += 1
-                else:
-                    desc = row.get("Desc")
-                    if desc is None or (isinstance(desc, float) and pd.isna(desc)):
-                        desc = ""
-                    else:
-                        desc = str(desc).strip()[:512] if desc else ""
-                    new_item = Item(generic_item_number=code, generic_description=desc or None)
-                    db.add(new_item)
-                    db.flush()
-                    item_map[code] = new_item.id
-                    item_id = new_item.id
-                    created_items_count += 1
-            else:
-                missing_items_count += 1
-                if len(errors_sample) < MAX_ERROR_SAMPLE:
-                    errors_sample.append(f"Missing item for code: {code!r}")
-                continue
+            missing_items_count += 1
+            if len(errors_sample) < MAX_ERROR_SAMPLE:
+                errors_sample.append(f"Missing item for code: {code!r}")
+            continue
 
         for col in dept_columns:
             val = row.get(col)
