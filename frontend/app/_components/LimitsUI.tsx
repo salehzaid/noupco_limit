@@ -452,26 +452,6 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 <option value="code">الكود ↑</option><option value="dept_max_asc">الحد ↑</option><option value="dept_max_desc">الحد ↓</option><option value="facility_total_desc">إجمالي المنشأة ↓</option><option value="updated_desc">آخر تعديل ↓</option>
               </select>
             </label>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-gray-400">عرض:</span>
-              {(["all", "zero", "nonzero"] as const).map((v) => (
-                <button key={v} onClick={() => { setQtyFilter(v); setCustomQty(""); }}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all cursor-pointer ${qtyFilter === v ? "bg-blue-600 text-white shadow-sm" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                  {v === "all" ? "الكل" : v === "zero" ? "صفر فقط" : "غير صفر"}
-                </button>
-              ))}
-              <span className="text-xs text-gray-400">أقل من:</span>
-              <input type="number" min={1} inputMode="numeric" pattern="[0-9]*" value={customQty} placeholder="–"
-                className={`w-16 rounded-lg border px-2 py-1 text-xs ${qtyFilter.startsWith("below:") ? "border-blue-400 bg-blue-50" : "border-gray-200 bg-gray-50"}`}
-                onChange={(e) => { const v = e.target.value; setCustomQty(v); setQtyFilter(v ? `below:${v}` : "all"); }} />
-            </div>
-            {qtyFilter !== "all" && (
-              <button onClick={() => { setQtyFilter("all"); setCustomQty(""); }}
-                className="flex items-center gap-1 rounded-lg bg-blue-100 px-2 py-1 text-xs text-blue-700 hover:bg-blue-200 cursor-pointer">
-                {qtyFilter === "zero" ? "صفر فقط" : qtyFilter === "nonzero" ? "غير صفر" : qtyFilter}
-                <span className="font-bold">×</span>
-              </button>
-            )}
             {Object.entries(clinicalFilters).filter(([, v]) => v).map(([k, v]) => (
               <button key={k} onClick={() => setClinicalFilters((p) => ({ ...p, [k]: "" }))}
                 className="flex items-center gap-1 rounded-lg bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200 cursor-pointer">
@@ -645,7 +625,9 @@ function MobileLimitCard({ row, editedQty, onEditedQtyChange, onStepDown, onStep
         <div className="min-w-0">
           <p className="truncate font-mono text-xs text-slate-500">{row.generic_item_number}</p>
           <p className="max-h-10 overflow-hidden text-sm leading-5 text-slate-700">{row.generic_description || "—"}</p>
-          <p className="mt-1 text-[11px] text-sky-700">{isExpanded ? "اضغط لإخفاء البدائل" : "اضغط لإظهار البدائل"}</p>
+          <p className={`mt-2 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition-all shadow-sm ${isExpanded ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-gradient-to-r from-amber-400 to-rose-400 text-white shadow-amber-200"}`}>
+            ✨ {isExpanded ? "إخفاء البدائل" : "إظهار البدائل والمقارنة"}
+          </p>
         </div>
         <div className="flex flex-col items-end gap-1">
           {isChanged && <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">تم التعديل</span>}
@@ -790,7 +772,18 @@ function ExpandableRow({ row, isChanged, isExpanded, onToggle, inlineQty, setInl
   return (
     <>
       <tr onClick={onToggle} className={`border-t cursor-pointer transition-colors ${isChanged ? "border-emerald-200" : "border-gray-100"} ${isExpanded ? (isChanged ? "bg-emerald-100/70" : "bg-blue-50") : (isChanged ? "bg-emerald-50/70 hover:bg-emerald-100/70" : "hover:bg-gray-50")}`}>
-        <td className="px-3 py-2 font-mono text-xs">{row.generic_item_number} {isChanged && <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">معدل</span>}</td><td className="px-3 py-2 text-xs">{row.generic_description || "—"}</td>
+        <td className="px-3 py-2 font-mono text-xs">
+          <div className="flex flex-col gap-1">
+            <span>{row.generic_item_number}</span>
+            {isChanged && <span className="w-fit rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700 font-bold">معدل</span>}
+          </div>
+        </td>
+        <td className="px-3 py-2 text-xs">
+          <p className="mb-2 line-clamp-1">{row.generic_description || "—"}</p>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onToggle(); }} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-[11px] font-bold transition-all ${isExpanded ? "bg-amber-100 text-amber-800 border border-amber-200 px-4" : "bg-gradient-to-r from-amber-400 to-rose-400 text-white shadow-sm shadow-amber-200 hover:scale-105"}`}>
+            ✨ {isExpanded ? "إخفاء البدائل" : "إظهار البدائل الذكية"}
+          </button>
+        </td>
         <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1">
             <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={editedQty} onChange={(e) => onEditedQtyChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickSave(); } }} className="w-24 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-right" />
