@@ -630,8 +630,11 @@ function MobileLimitCard({ row, editedQty, onEditedQtyChange, onStepDown, onStep
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          {isChanged && <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">تم التعديل</span>}
-          <span className="whitespace-nowrap rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">اجمالي الحد الاعلى للمستشفى: {row.facility_total_quantity}</span>
+          {isChanged && <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700 font-bold">تم التعديل</span>}
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[9px] leading-none text-slate-600 sm:text-[11px]">
+            <span className="opacity-80">اجمالي الحد الاعلى للمستشفى:</span>
+            <span className="font-bold">{row.facility_total_quantity}</span>
+          </span>
         </div>
       </button>
 
@@ -683,9 +686,9 @@ function MobileAltList({ alts, qtyMap, setQtyMap, saveMsgMap, onSave }: { alts: 
             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{alt.similarity_score}%</span>
           </div>
           <p className="mt-1 text-xs text-slate-600">{alt.generic_description || "—"}</p>
-          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
-            <span>الحد الحالي: {alt.current_qty ?? "—"}</span>
-            <span>اجمالي الحد الاعلى للمستشفى: {alt.facility_total || "—"}</span>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-y-1 text-[10px] sm:text-[11px]">
+            <span className="text-slate-500">الحد الحالي: <strong className="text-slate-700">{alt.current_qty ?? "—"}</strong></span>
+            <span className="rounded bg-white/60 px-1.5 py-0.5 text-slate-500 border border-slate-100">اجمالي الحد الاعلى للمستشفى: <strong className="text-slate-700">{alt.facility_total || "—"}</strong></span>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <input
