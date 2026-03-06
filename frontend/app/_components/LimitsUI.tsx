@@ -414,19 +414,23 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 <ChevronDown size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               </div>
             )}
-            <a href={deptId ? `${API}/api/export/department-max-limits?department_id=${deptId}&effective_year=2025${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ""}` : "#"} download className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-medium transition-all cursor-pointer ${deptId ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400"}`} onClick={(e) => !deptId && e.preventDefault()}>
-              <FileDown size={15} /> تصدير Excel
-            </a>
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); }} />
-            <button type="button" disabled={!deptId || importLoading} className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-medium transition-all cursor-pointer ${deptId && !importLoading ? "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" : "cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400"}`} onClick={() => fileInputRef.current?.click()}>
-              <FileUp size={15} /> {importLoading ? "جارٍ الاستيراد…" : "استيراد Excel"}
-            </button>
-            {deptId && (
-              <AiReportPanel
-                deptId={deptId}
-                deptName={departments.find((d) => d.id === deptId)?.name ?? ""}
-                effectiveYear={2025}
-              />
+            {!lockedDeptId && (
+              <>
+                <a href={deptId ? `${API}/api/export/department-max-limits?department_id=${deptId}&effective_year=2025${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ""}` : "#"} download className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-medium transition-all cursor-pointer ${deptId ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400"}`} onClick={(e) => !deptId && e.preventDefault()}>
+                  <FileDown size={15} /> تصدير Excel
+                </a>
+                <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); }} />
+                <button type="button" disabled={!deptId || importLoading} className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-medium transition-all cursor-pointer ${deptId && !importLoading ? "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" : "cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400"}`} onClick={() => fileInputRef.current?.click()}>
+                  <FileUp size={15} /> {importLoading ? "جارٍ الاستيراد…" : "استيراد Excel"}
+                </button>
+                {deptId && (
+                  <AiReportPanel
+                    deptId={deptId}
+                    deptName={departments.find((d) => d.id === deptId)?.name ?? ""}
+                    effectiveYear={2025}
+                  />
+                )}
+              </>
             )}
             {/* <div className="ms-auto flex items-center gap-2 text-sm text-gray-600">
               <span className="text-xs text-gray-500 whitespace-nowrap">وضع البدائل:</span>
