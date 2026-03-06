@@ -72,7 +72,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [hasMore, setHasMore] = useState(true);
-  const [sortBy, setSortBy] = useState("code");
+  const [sortBy, setSortBy] = useState("dept_max_desc");
   const [qtyFilter, setQtyFilter] = useState("all");
   const [customQty, setCustomQty] = useState("");
   const [clinicalFilters, setClinicalFilters] = useState<Record<string, string>>({});
@@ -129,11 +129,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
 
   const [backupMsg, setBackupMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  const [alternativesMode, setAlternativesMode] = useState<AltMode>(() => {
-    if (typeof window === "undefined") return "balanced";
-    const saved = window.localStorage.getItem(ALT_MODE_STORAGE_KEY) as AltMode | null;
-    return saved === "strict" || saved === "balanced" || saved === "wide" ? saved : "balanced";
-  });
+  const [alternativesMode, setAlternativesMode] = useState<AltMode>("wide");
   const [altsMinScoreOverride, setAltsMinScoreOverride] = useState<number | null>(null);
   const [panelAltsMinScoreOverride, setPanelAltsMinScoreOverride] = useState<number | null>(null);
 
@@ -432,12 +428,12 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 effectiveYear={2025}
               />
             )}
-            <div className="ms-auto flex items-center gap-2 text-sm text-gray-600">
+            {/* <div className="ms-auto flex items-center gap-2 text-sm text-gray-600">
               <span className="text-xs text-gray-500 whitespace-nowrap">وضع البدائل:</span>
               <select className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400/40 cursor-pointer" value={alternativesMode} onChange={(e) => setAlternativesMode(e.target.value as AltMode)} title="صارم = بدائل أقل/تشابه أعلى، متوازن = موصى به، واسع = بدائل أكثر/تشابه أقل">
                 <option value="strict">صارم</option><option value="balanced">متوازن</option><option value="wide">واسع</option>
               </select>
-            </div>
+            </div> */}
           </div>
 
           {/* Row 2: search + sort + quick filters */}
@@ -768,7 +764,7 @@ function AltTable({ alts, qtyMap, setQtyMap, saveMsgMap, onSave }: { alts: AltWi
                 <td className="px-3 py-2 text-right font-semibold text-slate-700">{alt.current_qty !== null ? alt.current_qty : <span className="text-gray-300">—</span>}</td>
                 <td className="px-3 py-2 text-right text-gray-500">{alt.facility_total || "—"}</td>
                 <td className="px-3 py-2 text-center">
-                  <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={qtyMap[alt.id] ?? ""} onClick={(e) => e.stopPropagation()} onChange={(e) => setQtyMap((prev) => ({ ...prev, [alt.id]: e.target.value }))} placeholder={alt.current_qty !== null ? String(alt.current_qty) : "0"} className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center focus:ring-2 focus:ring-blue-300 focus:outline-none" />
+                  <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={qtyMap[alt.id] ?? ""} onClick={(e) => e.stopPropagation()} onChange={(e) => setQtyMap((prev) => ({ ...prev, [alt.id]: e.target.value }))} placeholder={alt.current_qty !== null ? String(alt.current_qty) : "0"} className="w-24 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center focus:ring-2 focus:ring-blue-300 focus:outline-none" />
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1.5">
@@ -793,7 +789,7 @@ function ExpandableRow({ row, isChanged, isExpanded, onToggle, inlineQty, setInl
         <td className="px-3 py-2 font-mono text-xs">{row.generic_item_number} {isChanged && <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">معدل</span>}</td><td className="px-3 py-2 text-xs">{row.generic_description || "—"}</td>
         <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1">
-            <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={editedQty} onChange={(e) => onEditedQtyChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickSave(); } }} className="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-right" />
+            <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={editedQty} onChange={(e) => onEditedQtyChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickSave(); } }} className="w-24 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-right" />
             <button type="button" onClick={onQuickSave} disabled={quickSaving} className="px-2 py-0.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-40 cursor-pointer">{quickSaving ? "…" : "حفظ"}</button>
             {quickSaved && <span className="text-emerald-600 text-xs">✓</span>}
           </div>
@@ -805,7 +801,7 @@ function ExpandableRow({ row, isChanged, isExpanded, onToggle, inlineQty, setInl
           <div className="rounded-xl bg-white/70 border border-slate-200 p-3 mb-3">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <span className="text-xs text-gray-600">تعديل الحد للكود: <strong className="font-mono text-blue-700">{row.generic_item_number}</strong></span>
-              <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={inlineQty} onChange={(e) => setInlineQty(e.target.value)} onClick={(e) => e.stopPropagation()} className="w-20 border border-gray-300 rounded px-2 py-1 text-sm sm:w-24" />
+              <input type="number" min={0} inputMode="numeric" pattern="[0-9]*" value={inlineQty} onChange={(e) => setInlineQty(e.target.value)} onClick={(e) => e.stopPropagation()} className="w-24 border border-gray-300 rounded px-2 py-1 text-sm sm:w-32" />
               <button type="button" onClick={(e) => { e.stopPropagation(); onSave(); }} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 cursor-pointer">حفظ</button>
               {saveMsg && <span className="text-xs text-green-700">{saveMsg}</span>}
             </div>
