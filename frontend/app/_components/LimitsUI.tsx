@@ -449,7 +449,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
             <label className="flex items-center gap-1 whitespace-nowrap text-xs text-gray-500">
               ترتيب:
               <select className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-sm text-gray-700 focus:outline-none cursor-pointer" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                <option value="code">الكود ↑</option><option value="dept_max_asc">الحد ↑</option><option value="dept_max_desc">الحد ↓</option><option value="facility_total_desc">إجمالي المنشأة ↓</option><option value="updated_desc">آخر تعديل ↓</option>
+                <option value="code">الكود ↑</option><option value="dept_max_asc">الحد ↑</option><option value="dept_max_desc">الحد ↓</option><option value="facility_total_desc">اجمالي الحد الاعلى للمستشفى ↓</option><option value="updated_desc">آخر تعديل ↓</option>
               </select>
             </label>
             {Object.entries(clinicalFilters).filter(([, v]) => v).map(([k, v]) => (
@@ -509,7 +509,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                   <th className="px-4 py-3 text-right font-medium text-sm">الكود</th>
                   <th className="px-4 py-3 text-right font-medium text-sm">الوصف</th>
                   <th className="px-4 py-3 text-right font-medium text-sm">حد القسم</th>
-                  <th className="px-4 py-3 text-right font-medium text-sm">إجمالي المنشأة</th>
+                  <th className="px-4 py-3 text-right font-medium text-sm">اجمالي الحد الاعلى للمستشفى</th>
                   <th className="px-4 py-3 text-right font-medium text-sm">آخر تحديث</th>
                 </tr>
               </thead>
@@ -631,7 +631,7 @@ function MobileLimitCard({ row, editedQty, onEditedQtyChange, onStepDown, onStep
         </div>
         <div className="flex flex-col items-end gap-1">
           {isChanged && <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">تم التعديل</span>}
-          <span className="whitespace-nowrap rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">الإجمالي: {row.facility_total_quantity}</span>
+          <span className="whitespace-nowrap rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">اجمالي الحد الاعلى للمستشفى: {row.facility_total_quantity}</span>
         </div>
       </button>
 
@@ -685,7 +685,7 @@ function MobileAltList({ alts, qtyMap, setQtyMap, saveMsgMap, onSave }: { alts: 
           <p className="mt-1 text-xs text-slate-600">{alt.generic_description || "—"}</p>
           <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
             <span>الحد الحالي: {alt.current_qty ?? "—"}</span>
-            <span>إجمالي المنشأة: {alt.facility_total || "—"}</span>
+            <span>اجمالي الحد الاعلى للمستشفى: {alt.facility_total || "—"}</span>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <input
@@ -721,7 +721,7 @@ function AltTable({ alts, qtyMap, setQtyMap, saveMsgMap, onSave }: { alts: AltWi
               <th className="px-3 py-2 text-right font-medium">نسبة التشابه</th>
               <th className="px-3 py-2 text-right font-medium">السبب</th>
               <th className="px-3 py-2 text-right font-medium">الحد الحالي</th>
-              <th className="px-3 py-2 text-right font-medium">إجمالي المنشأة</th>
+              <th className="px-3 py-2 text-right font-medium">اجمالي الحد الاعلى للمستشفى</th>
               <th className="px-3 py-2 text-center font-medium w-28">الكمية</th>
               <th className="py-2 w-24"></th>
             </tr>
