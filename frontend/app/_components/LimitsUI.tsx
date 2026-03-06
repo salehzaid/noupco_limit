@@ -42,7 +42,7 @@ const ALT_MODE_CONFIG: Record<AltMode, { top_k: number; min_score_override?: num
 };
 
 type Dept = { id: number; name: string; is_active: boolean };
-type LimitRow = { item_id: number; generic_item_number: string; generic_description: string | null; department_max_quantity: number; facility_total_quantity: number; updated_at: string; category_ar: string | null; clinical_use: string | null; clinical_category: string | null; specialty_tags: string | null; item_family_group: string | null };
+type LimitRow = { item_id: number; generic_item_number: string; generic_description: string | null; department_max_quantity: number; facility_total_quantity: number; updated_at: string; source: string; category_ar: string | null; clinical_use: string | null; clinical_category: string | null; specialty_tags: string | null; item_family_group: string | null };
 type ClinicalMeta = { category_ar: string[]; clinical_use: string[]; clinical_category: string[]; specialty_tags: string[]; item_family_group: string[] };
 type ItemHit = { id: number; generic_item_number: string; generic_description: string | null };
 type UpsertRes = { item_id: number; department_id: number; department_max_quantity: number; facility_total_quantity: number; effective_year: number | null };
@@ -151,13 +151,13 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
 
   useEffect(() => {
     if (lockedDeptId) return;
-    fetch(`${API}/api/departments`).then((r) => r.json()).then((d: Dept[]) => setDepartments(d)).catch(() => {});
+    fetch(`${API}/api/departments`).then((r) => r.json()).then((d: Dept[]) => setDepartments(d)).catch(() => { });
   }, [lockedDeptId]);
 
   useEffect(() => {
     if (!deptId) { setClinicalMeta(null); return; }
     fetch(`${API}/api/max-limits/department/clinical-meta?department_id=${deptId}`)
-      .then((r) => r.json()).then((m: ClinicalMeta) => setClinicalMeta(m)).catch(() => {});
+      .then((r) => r.json()).then((m: ClinicalMeta) => setClinicalMeta(m)).catch(() => { });
   }, [deptId]);
 
   const buildParams = useCallback((dept: number, offset: number, q: string, sort: string, filter: string, clinical: Record<string, string>) => {
@@ -221,7 +221,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
     const offset = rowsLengthRef.current; isFetchingMoreRef.current = true; setTableLoadingMore(true);
     fetch(`${API}/api/max-limits/department?${buildParams(deptId, offset, search, sortBy, qtyFilter, clinicalFilters)}`)
       .then(async (r) => { const count = Number(r.headers.get("X-Total-Count") || "0"); const d: LimitRow[] = await r.json(); setTotal(count); setRows((prev) => [...prev, ...d]); setHasMore(offset + d.length < count); rowsLengthRef.current = offset + d.length; })
-      .catch(() => {}).finally(() => { setTableLoadingMore(false); isFetchingMoreRef.current = false; });
+      .catch(() => { }).finally(() => { setTableLoadingMore(false); isFetchingMoreRef.current = false; });
   }, [deptId, search, sortBy, qtyFilter, clinicalFilters, hasMore, tableLoading, tableLoadingMore, buildParams]);
 
   useEffect(() => { loadInitial(deptId, search, sortBy, qtyFilter, clinicalFilters); }, [deptId, search, sortBy, qtyFilter, clinicalFilters, loadInitial]);
@@ -334,7 +334,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
   const onItemQueryChange = (val: string) => {
     setItemQuery(val); setSelectedItem(null); if (itemTimer.current) clearTimeout(itemTimer.current);
     if (val.trim().length < 1) { setItemHits([]); setShowDropdown(false); return; }
-    itemTimer.current = setTimeout(() => { fetch(`${API}/api/items/search?q=${encodeURIComponent(val.trim())}&limit=10`).then((r) => r.json()).then((d: ItemHit[]) => { setItemHits(d); setShowDropdown(d.length > 0); }).catch(() => {}); }, 300);
+    itemTimer.current = setTimeout(() => { fetch(`${API}/api/items/search?q=${encodeURIComponent(val.trim())}&limit=10`).then((r) => r.json()).then((d: ItemHit[]) => { setItemHits(d); setShowDropdown(d.length > 0); }).catch(() => { }); }, 300);
   };
 
   const pickItem = (it: ItemHit) => {
@@ -511,7 +511,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
           {!tableLoading && rows.length === 0 && <div className="rounded-2xl border border-gray-100 bg-white px-3 py-8 text-center text-gray-400">{deptId ? "لا توجد بنود" : "اختر قسمًا"}</div>}
           <div className="space-y-2">
             {rows.map((r) => (
-              <MobileLimitCard key={r.item_id} row={r} editedQty={editedQtyByItemId[r.item_id] ?? String(r.department_max_quantity)} onEditedQtyChange={(v: string) => setEditedQtyByItemId((prev) => ({ ...prev, [r.item_id]: v }))} onStepDown={() => adjustEditedQty(r.item_id, r.department_max_quantity, -1)} onStepUp={() => adjustEditedQty(r.item_id, r.department_max_quantity, 1)} onSave={() => handleQuickSave(r)} quickSaving={quickSavingItemId === r.item_id} quickSaved={quickSavedItemId === r.item_id} isChanged={Boolean(changedItemIds[r.item_id])} isExpanded={expandedId === r.item_id} onToggleAlternatives={() => toggleRow(r)} alts={altsEnriched} altsMinScoreOverride={altsMinScoreOverride} altsRecommendedMinScore={altsRecommendedMinScore} altsLoading={altsLoading} altsError={altsError} altQtyMap={altQtyMap} setAltQtyMap={setAltQtyMap} altSaveMsg={altSaveMsg} onAltSave={handleInlineAltSave} />
+              <MobileLimitCard key={r.item_id} row={r} editedQty={editedQtyByItemId[r.item_id] ?? String(r.department_max_quantity)} onEditedQtyChange={(v: string) => setEditedQtyByItemId((prev) => ({ ...prev, [r.item_id]: v }))} onStepDown={() => adjustEditedQty(r.item_id, r.department_max_quantity, -1)} onStepUp={() => adjustEditedQty(r.item_id, r.department_max_quantity, 1)} onSave={() => handleQuickSave(r)} quickSaving={quickSavingItemId === r.item_id} quickSaved={quickSavedItemId === r.item_id} isChanged={Boolean(changedItemIds[r.item_id]) || r.source === "manual"} isExpanded={expandedId === r.item_id} onToggleAlternatives={() => toggleRow(r)} alts={altsEnriched} altsMinScoreOverride={altsMinScoreOverride} altsRecommendedMinScore={altsRecommendedMinScore} altsLoading={altsLoading} altsError={altsError} altQtyMap={altQtyMap} setAltQtyMap={setAltQtyMap} altSaveMsg={altSaveMsg} onAltSave={handleInlineAltSave} />
             ))}
           </div>
         </div>
@@ -533,7 +533,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 {tableLoading && rows.length === 0 && <tr><td colSpan={5} className="py-12 text-center text-gray-400"><RefreshCw size={20} className="mx-auto mb-2 animate-spin opacity-40" />جارٍ التحميل…</td></tr>}
                 {!tableLoading && rows.length === 0 && <tr><td colSpan={5} className="py-12 text-center text-gray-400">{deptId ? "لا توجد بنود" : "اختر قسمًا لعرض البنود"}</td></tr>}
                 {rows.map((r) => (
-                  <ExpandableRow key={r.item_id} row={r} isChanged={Boolean(changedItemIds[r.item_id])} isExpanded={expandedId === r.item_id} onToggle={() => toggleRow(r)} inlineQty={inlineQty} setInlineQty={setInlineQty} onSave={() => handleInlineSave(r.item_id)} saveMsg={inlineSaveMsg} alts={altsEnriched} altsMinScoreOverride={altsMinScoreOverride} altsRecommendedMinScore={altsRecommendedMinScore} altsLoading={altsLoading} altsError={altsError} altQtyMap={altQtyMap} setAltQtyMap={setAltQtyMap} altSaveMsg={altSaveMsg} onAltSave={handleInlineAltSave} editedQty={editedQtyByItemId[r.item_id] ?? String(r.department_max_quantity)} onEditedQtyChange={(v) => setEditedQtyByItemId((prev) => ({ ...prev, [r.item_id]: v }))} onQuickSave={() => handleQuickSave(r)} quickSaving={quickSavingItemId === r.item_id} quickSaved={quickSavedItemId === r.item_id} />
+                  <ExpandableRow key={r.item_id} row={r} isChanged={Boolean(changedItemIds[r.item_id]) || r.source === "manual"} isExpanded={expandedId === r.item_id} onToggle={() => toggleRow(r)} inlineQty={inlineQty} setInlineQty={setInlineQty} onSave={() => handleInlineSave(r.item_id)} saveMsg={inlineSaveMsg} alts={altsEnriched} altsMinScoreOverride={altsMinScoreOverride} altsRecommendedMinScore={altsRecommendedMinScore} altsLoading={altsLoading} altsError={altsError} altQtyMap={altQtyMap} setAltQtyMap={setAltQtyMap} altSaveMsg={altSaveMsg} onAltSave={handleInlineAltSave} editedQty={editedQtyByItemId[r.item_id] ?? String(r.department_max_quantity)} onEditedQtyChange={(v) => setEditedQtyByItemId((prev) => ({ ...prev, [r.item_id]: v }))} onQuickSave={() => handleQuickSave(r)} quickSaving={quickSavingItemId === r.item_id} quickSaved={quickSavedItemId === r.item_id} />
                 ))}
               </tbody>
             </table>
@@ -597,7 +597,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 <p className="border-b border-gray-100 px-2 py-1 text-[11px] text-gray-500 sm:hidden">اسحب أفقيا لعرض كل الأعمدة</p>
                 <div className="overflow-auto" style={{ maxHeight: "40vh" }}>
                   <table className="w-full min-w-[560px] text-xs"><thead className="bg-gray-100 sticky top-0"><tr><th className="px-2 py-1.5 text-right">الكود</th><th className="px-2 py-1.5 text-right">القديم</th><th className="px-2 py-1.5 text-right">الجديد</th><th className="px-2 py-1.5 text-right">العملية</th></tr></thead>
-                  <tbody>{importResult.preview_rows.map((pr, i) => <tr key={i} className="border-t border-gray-100"><td className="px-2 py-1 font-mono">{pr.generic_item_number}</td><td className="px-2 py-1 text-right">{pr.old_quantity ?? "—"}</td><td className="px-2 py-1 text-right">{pr.new_quantity}</td><td className="px-2 py-1 text-right"><span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.action === "insert" ? "bg-emerald-100 text-emerald-700" : pr.action === "update" ? "bg-blue-100 text-blue-700" : pr.action === "delete" ? "bg-red-100 text-red-700" : pr.action === "missing" ? "bg-gray-100 text-gray-600" : "bg-slate-100 text-slate-600"}`}>{pr.action}</span></td></tr>)}</tbody></table>
+                    <tbody>{importResult.preview_rows.map((pr, i) => <tr key={i} className="border-t border-gray-100"><td className="px-2 py-1 font-mono">{pr.generic_item_number}</td><td className="px-2 py-1 text-right">{pr.old_quantity ?? "—"}</td><td className="px-2 py-1 text-right">{pr.new_quantity}</td><td className="px-2 py-1 text-right"><span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.action === "insert" ? "bg-emerald-100 text-emerald-700" : pr.action === "update" ? "bg-blue-100 text-blue-700" : pr.action === "delete" ? "bg-red-100 text-red-700" : pr.action === "missing" ? "bg-gray-100 text-gray-600" : "bg-slate-100 text-slate-600"}`}>{pr.action}</span></td></tr>)}</tbody></table>
                 </div>
               </div>
             )}
@@ -621,7 +621,7 @@ export default function LimitsUI({ lockedDeptId, headerSlot }: { lockedDeptId?: 
                 <p className="border-b border-gray-100 px-2 py-1 text-[11px] text-gray-500 sm:hidden">اسحب أفقيا لعرض كل الأعمدة</p>
                 <div className="overflow-auto" style={{ maxHeight: "50vh" }}>
                   <table className="w-full min-w-[700px]"><thead className="bg-gray-100 sticky top-0"><tr><th className="px-2 py-1.5 text-right">الوقت</th><th className="px-2 py-1.5 text-right">الكود</th><th className="px-2 py-1.5 text-right">العملية</th><th className="px-2 py-1.5 text-right">القديم → الجديد</th><th className="px-2 py-1.5 text-right">المصدر</th></tr></thead>
-                  <tbody>{auditLogs.map((log) => <tr key={log.id} className="border-t border-gray-100"><td className="px-2 py-1 text-gray-600">{log.created_at ? new Date(log.created_at).toLocaleString() : "—"}</td><td className="px-2 py-1 font-mono">{log.generic_item_number}</td><td className="px-2 py-1"><span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${log.action === "insert" ? "bg-emerald-100 text-emerald-700" : log.action === "update" ? "bg-blue-100 text-blue-700" : log.action === "delete" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"}`}>{log.action}</span></td><td className="px-2 py-1 text-right">{log.old_quantity ?? "—"} → {log.new_quantity ?? "—"}</td><td className="px-2 py-1">{log.source}</td></tr>)}</tbody></table>
+                    <tbody>{auditLogs.map((log) => <tr key={log.id} className="border-t border-gray-100"><td className="px-2 py-1 text-gray-600">{log.created_at ? new Date(log.created_at).toLocaleString() : "—"}</td><td className="px-2 py-1 font-mono">{log.generic_item_number}</td><td className="px-2 py-1"><span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${log.action === "insert" ? "bg-emerald-100 text-emerald-700" : log.action === "update" ? "bg-blue-100 text-blue-700" : log.action === "delete" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"}`}>{log.action}</span></td><td className="px-2 py-1 text-right">{log.old_quantity ?? "—"} → {log.new_quantity ?? "—"}</td><td className="px-2 py-1">{log.source}</td></tr>)}</tbody></table>
                 </div>
               </div>
             )}
