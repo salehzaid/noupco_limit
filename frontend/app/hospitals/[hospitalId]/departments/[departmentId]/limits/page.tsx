@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import LimitsUI from "@/app/_components/LimitsUI";
-import { ArrowRight, AlertTriangle, ShieldAlert } from "lucide-react";
+import { ArrowRight, ShieldAlert } from "lucide-react";
 import { getApiBase } from "@/app/lib/api";
 
 const API = getApiBase();
@@ -76,8 +76,6 @@ export default function HospitalDepartmentLimitsPage() {
     );
   }
 
-  const pinVerified = typeof window !== "undefined" && sessionStorage.getItem(`nupco_pin_ok_${hospitalId}_${departmentId}`) === "1";
-
   const header = (
     <div className="mb-2">
       <div className="flex items-center gap-3 mb-2">
@@ -90,15 +88,6 @@ export default function HospitalDepartmentLimitsPage() {
         </Link>
       </div>
       <h1 className="text-xl font-bold text-gray-800">{deptName} — الحدود القصوى</h1>
-      {!pinVerified && (
-        <div className="mt-3 flex items-center gap-2 px-4 py-2.5 bg-amber-50/80 border border-amber-200/60 rounded-xl text-xs text-amber-700">
-          <AlertTriangle size={14} className="flex-shrink-0" />
-          <span>
-            دخلت هذه الصفحة مباشرة. للدخول المُوثّق، استخدم{" "}
-            <Link href={`/hospitals/${hospitalId}/enter`} className="underline font-semibold hover:text-amber-900">صفحة دخول القسم</Link>.
-          </span>
-        </div>
-      )}
     </div>
   );
 

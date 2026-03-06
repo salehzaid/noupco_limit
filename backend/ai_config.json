@@ -1,6 +1,6 @@
 {
-  "provider": "gemini",
-  "model": "gemini-2.0-flash",
+  "provider": "anthropic",
+  "model": "claude-opus-4-6",
   "api_keys": {
     "anthropic": "",
     "openai": "",
