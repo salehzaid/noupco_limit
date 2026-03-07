@@ -26,6 +26,7 @@ type RegisteredNodesResponse = {
   offset: number;
   rows: RegisteredNodeRow[];
 };
+type HospitalDepartment = { id: number; name: string };
 type Usage = {
   last_7_days_changes: number;
   last_30_days_changes: number;
@@ -63,6 +64,85 @@ async function fetchRegisteredNodesPage(hospitalId: string, offset: number): Pro
   return data as RegisteredNodesResponse;
 }
 
+async function loadRegisteredNodesFromLegacyEndpoints(hospitalId: string): Promise<RegisteredNodesResponse> {
+  const empty: RegisteredNodesResponse = {
+    hospital_id: Number.parseInt(hospitalId, 10) || 0,
+    total: 0,
+    limit: 0,
+    offset: 0,
+    rows: [],
+  };
+
+  const departmentsRes = await fetchWithTimeout(`${API}/api/hospitals/${hospitalId}/departments`);
+  if (!departmentsRes.ok) return empty;
+
+  const departments = (await departmentsRes.json().catch(() => [])) as HospitalDepartment[];
+  if (!Array.isArray(departments) || departments.length === 0) return empty;
+
+  const rows = await Promise.all(departments.map(async (dept) => {
+    const params = new URLSearchParams({
+      department_id: String(dept.id),
+      limit: "1",
+      offset: "0",
+      sort_by: "updated_desc",
+    });
+
+    try {
+      const res = await fetchWithTimeout(`${API}/api/max-limits/department?${params.toString()}`);
+      if (!res.ok) {
+        return {
+          department_id: dept.id,
+          department_name: dept.name,
+          registered_nodes_count: 0,
+          last_modified_at: null,
+        };
+      }
+
+      const count = Number(res.headers.get("X-Total-Count") || "0");
+      const data = (await res.json().catch(() => [])) as Array<{ updated_at?: string | null }>;
+
+      return {
+        department_id: dept.id,
+        department_name: dept.name,
+        registered_nodes_count: Number.isFinite(count) ? count : 0,
+        last_modified_at: data[0]?.updated_at ?? null,
+      };
+    } catch {
+      return {
+        department_id: dept.id,
+        department_name: dept.name,
+        registered_nodes_count: 0,
+        last_modified_at: null,
+      };
+    }
+  }));
+
+  rows.sort((a, b) => {
+    const aMissing = !a.last_modified_at;
+    const bMissing = !b.last_modified_at;
+    if (aMissing !== bMissing) return aMissing ? 1 : -1;
+
+    if (a.last_modified_at && b.last_modified_at) {
+      const diff = new Date(b.last_modified_at).getTime() - new Date(a.last_modified_at).getTime();
+      if (diff !== 0) return diff;
+    }
+
+    if (a.registered_nodes_count !== b.registered_nodes_count) {
+      return b.registered_nodes_count - a.registered_nodes_count;
+    }
+
+    return a.department_name.localeCompare(b.department_name, "ar");
+  });
+
+  return {
+    hospital_id: Number.parseInt(hospitalId, 10) || 0,
+    total: rows.length,
+    limit: rows.length,
+    offset: 0,
+    rows,
+  };
+}
+
 async function loadAllRegisteredNodes(hospitalId: string): Promise<RegisteredNodesResponse> {
   const empty: RegisteredNodesResponse = {
     hospital_id: Number.parseInt(hospitalId, 10) || 0,
@@ -73,7 +153,7 @@ async function loadAllRegisteredNodes(hospitalId: string): Promise<RegisteredNod
   };
 
   const firstPage = await fetchRegisteredNodesPage(hospitalId, 0);
-  if (!firstPage) return empty;
+  if (!firstPage) return loadRegisteredNodesFromLegacyEndpoints(hospitalId);
 
   const total = Number(firstPage.total) || firstPage.rows.length;
   if (firstPage.rows.length >= total) {
