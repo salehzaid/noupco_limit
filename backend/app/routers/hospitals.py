@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -310,6 +310,91 @@ def set_department_pin(department_id: int, body: SetPinBody, db: Session = Depen
         dept.access_pin = None
     db.commit()
     return {"department_id": dept.id, "has_pin": bool(dept.access_pin)}
+
+
+class DepartmentRegisteredNodeRow(BaseModel):
+    department_id: int
+    department_name: str
+    registered_nodes_count: int
+    last_modified_at: datetime | None
+
+
+class DepartmentRegisteredNodesOut(BaseModel):
+    hospital_id: int
+    total: int
+    limit: int
+    offset: int
+    rows: list[DepartmentRegisteredNodeRow]
+
+
+@router.get("/hospitals/{hospital_id}/analytics/registered-nodes", response_model=DepartmentRegisteredNodesOut)
+def list_hospital_registered_nodes(
+    hospital_id: int,
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None, description="Search by department name"),
+    effective_year: int | None = Query(2025, description="Year filter; pass null for all years"),
+    sort_by: str = Query("last_modified_desc", description="last_modified_desc | nodes_desc | name_asc | name_desc"),
+    db: Session = Depends(get_db),
+):
+    """Follow-up table for registered nodes per department, sorted by last update."""
+    hospital = db.execute(select(Hospital).where(Hospital.id == hospital_id)).scalar_one_or_none()
+    if not hospital:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+
+    d = Department.__table__
+    dml = DepartmentMaxLimit.__table__
+
+    join_condition = dml.c.department_id == d.c.id
+    if effective_year is not None:
+        join_condition = and_(join_condition, dml.c.effective_year == effective_year)
+
+    dept_filters = [d.c.hospital_id == hospital_id]
+    if q and q.strip():
+        dept_filters.append(d.c.name.ilike(f"%{q.strip()}%"))
+
+    nodes_count = func.count(func.distinct(dml.c.item_id))
+    last_modified = func.max(dml.c.updated_at)
+
+    stmt = (
+        select(
+            d.c.id.label("department_id"),
+            d.c.name.label("department_name"),
+            nodes_count.label("registered_nodes_count"),
+            last_modified.label("last_modified_at"),
+        )
+        .select_from(d.outerjoin(dml, join_condition))
+        .where(*dept_filters)
+        .group_by(d.c.id, d.c.name)
+    )
+
+    if sort_by == "nodes_desc":
+        order_by = [nodes_count.desc(), last_modified.is_(None).asc(), last_modified.desc(), d.c.name.asc()]
+    elif sort_by == "name_asc":
+        order_by = [d.c.name.asc()]
+    elif sort_by == "name_desc":
+        order_by = [d.c.name.desc()]
+    else:
+        order_by = [last_modified.is_(None).asc(), last_modified.desc(), nodes_count.desc(), d.c.name.asc()]
+
+    total = db.execute(select(func.count()).select_from(d).where(*dept_filters)).scalar() or 0
+    rows = db.execute(stmt.order_by(*order_by).offset(offset).limit(limit)).all()
+
+    return DepartmentRegisteredNodesOut(
+        hospital_id=hospital_id,
+        total=total,
+        limit=limit,
+        offset=offset,
+        rows=[
+            DepartmentRegisteredNodeRow(
+                department_id=r.department_id,
+                department_name=r.department_name,
+                registered_nodes_count=r.registered_nodes_count,
+                last_modified_at=r.last_modified_at,
+            )
+            for r in rows
+        ],
+    )
 
 
 @router.get("/hospitals/{hospital_id}/dashboard")

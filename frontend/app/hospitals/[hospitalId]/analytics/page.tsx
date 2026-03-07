@@ -1,16 +1,31 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Activity, TrendingUp, Clock, BarChart3 } from "lucide-react";
-import { getApiBase } from "@/app/lib/api";
+import { fetchWithTimeout, getApiBase } from "@/app/lib/api";
 
 const API = getApiBase();
+const REGISTERED_NODES_PAGE_SIZE = 500;
 
 type DeptChange = { department_id: number; department_name: string; changes: number };
 type RecentChange = { created_at: string | null; department_name: string; generic_item_number: string; action: string; old_quantity: number | null; new_quantity: number | null; source: string };
 type CoverageRow = { department_id: number; department_name: string; items_with_limits: number };
+type RegisteredNodeRow = {
+  department_id: number;
+  department_name: string;
+  registered_nodes_count: number;
+  last_modified_at: string | null;
+};
+type RegisteredNodesResponse = {
+  hospital_id: number;
+  total: number;
+  limit: number;
+  offset: number;
+  rows: RegisteredNodeRow[];
+};
 type Usage = {
   last_7_days_changes: number;
   last_30_days_changes: number;
@@ -20,6 +35,76 @@ type Usage = {
 };
 
 function fmt(n: number) { return n.toLocaleString("ar-SA"); }
+function fmtDate(value: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("ar-SA", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function fetchRegisteredNodesPage(hospitalId: string, offset: number): Promise<RegisteredNodesResponse | null> {
+  const params = new URLSearchParams({
+    limit: String(REGISTERED_NODES_PAGE_SIZE),
+    offset: String(offset),
+    sort_by: "last_modified_desc",
+  });
+
+  const res = await fetchWithTimeout(
+    `${API}/api/hospitals/${hospitalId}/analytics/registered-nodes?${params.toString()}`
+  );
+  if (!res.ok) return null;
+
+  const data = await res.json().catch(() => null);
+  if (!data || !Array.isArray(data.rows)) return null;
+  return data as RegisteredNodesResponse;
+}
+
+async function loadAllRegisteredNodes(hospitalId: string): Promise<RegisteredNodesResponse> {
+  const empty: RegisteredNodesResponse = {
+    hospital_id: Number.parseInt(hospitalId, 10) || 0,
+    total: 0,
+    limit: 0,
+    offset: 0,
+    rows: [],
+  };
+
+  const firstPage = await fetchRegisteredNodesPage(hospitalId, 0);
+  if (!firstPage) return empty;
+
+  const total = Number(firstPage.total) || firstPage.rows.length;
+  if (firstPage.rows.length >= total) {
+    return {
+      hospital_id: firstPage.hospital_id,
+      total,
+      limit: firstPage.rows.length,
+      offset: 0,
+      rows: firstPage.rows,
+    };
+  }
+
+  const offsets: number[] = [];
+  for (let currentOffset = firstPage.rows.length; currentOffset < total; currentOffset += REGISTERED_NODES_PAGE_SIZE) {
+    offsets.push(currentOffset);
+  }
+
+  const pages = await Promise.all(offsets.map((offset) => fetchRegisteredNodesPage(hospitalId, offset)));
+  const mergedRows = [...firstPage.rows];
+  for (const page of pages) {
+    if (page?.rows?.length) mergedRows.push(...page.rows);
+  }
+
+  return {
+    hospital_id: firstPage.hospital_id,
+    total,
+    limit: mergedRows.length,
+    offset: 0,
+    rows: mergedRows.slice(0, total),
+  };
+}
 
 const ACTION_BADGE: Record<string, string> = {
   insert: "bg-emerald-100 text-emerald-700",
@@ -44,14 +129,50 @@ export default function AnalyticsPage() {
   const hospitalId = params.hospitalId;
 
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [registeredNodes, setRegisteredNodes] = useState<RegisteredNodesResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API}/api/hospitals/${hospitalId}/dashboard`)
-      .then((r) => r.json())
-      .then((d) => { if (d?.usage) setUsage(d.usage); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    let cancelled = false;
+
+    const emptyRegisteredNodes: RegisteredNodesResponse = {
+      hospital_id: Number.parseInt(hospitalId, 10) || 0,
+      total: 0,
+      limit: 0,
+      offset: 0,
+      rows: [],
+    };
+
+    Promise.allSettled([
+      fetchWithTimeout(`${API}/api/hospitals/${hospitalId}/dashboard`).then((r) => (r.ok ? r.json() : null)),
+      loadAllRegisteredNodes(hospitalId),
+    ])
+      .then(([dashboardResult, registeredNodesResult]) => {
+        if (cancelled) return;
+
+        if (dashboardResult.status === "fulfilled" && dashboardResult.value?.usage) {
+          setUsage(dashboardResult.value.usage);
+        } else {
+          setUsage(null);
+        }
+
+        if (
+          registeredNodesResult.status === "fulfilled" &&
+          registeredNodesResult.value &&
+          Array.isArray(registeredNodesResult.value.rows)
+        ) {
+          setRegisteredNodes(registeredNodesResult.value as RegisteredNodesResponse);
+        } else {
+          setRegisteredNodes(emptyRegisteredNodes);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [hospitalId]);
 
   if (loading) return (
@@ -152,6 +273,71 @@ export default function AnalyticsPage() {
             </ResponsiveContainer>
           )}
         </div>
+      </div>
+
+      {/* Registered nodes by department */}
+      <div className="glass rounded-2xl p-6 shadow-lg shadow-black/5">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h2 className="text-sm font-semibold text-gray-700">متابعة البنود المسجلة حسب آخر تعديل</h2>
+          {registeredNodes && (
+            <span className="text-xs text-gray-500">{fmt(registeredNodes.total)} قسم</span>
+          )}
+        </div>
+
+        {!registeredNodes || registeredNodes.rows.length === 0 ? (
+          <p className="text-gray-400 text-sm py-8 text-center">لا توجد بنود مسجلة للأقسام بعد.</p>
+        ) : (
+          <div className="rounded-xl border border-gray-200/60">
+            <p className="border-b border-gray-100 px-3 py-1.5 text-[11px] text-gray-500">اسحب أفقيا لعرض كل الأقسام كأعمدة</p>
+            <div className="overflow-x-auto">
+              <table className="w-max min-w-full text-sm">
+                <thead className="bg-gray-50/80">
+                  <tr className="text-xs text-gray-500">
+                    <th className="px-4 py-3 text-right font-semibold text-gray-700 min-w-[130px]">المؤشر</th>
+                    {registeredNodes.rows.map((row) => (
+                      <th key={row.department_id} className="px-4 py-3 text-right font-semibold text-gray-700 min-w-[170px]">
+                        {row.department_name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  <tr className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-4 py-2.5 text-xs font-medium text-gray-700">الترتيب حسب آخر تعديل</td>
+                    {registeredNodes.rows.map((row, i) => (
+                      <td key={row.department_id} className="px-4 py-2.5 text-xs text-gray-600 tabular-nums whitespace-nowrap">{fmt(i + 1)}</td>
+                    ))}
+                  </tr>
+                  <tr className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-4 py-2.5 text-xs font-medium text-gray-700">البنود المسجلة</td>
+                    {registeredNodes.rows.map((row) => (
+                      <td key={row.department_id} className="px-4 py-2.5 text-xs text-gray-700 tabular-nums whitespace-nowrap">{fmt(row.registered_nodes_count)}</td>
+                    ))}
+                  </tr>
+                  <tr className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-4 py-2.5 text-xs font-medium text-gray-700">آخر تعديل</td>
+                    {registeredNodes.rows.map((row) => (
+                      <td key={row.department_id} className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(row.last_modified_at)}</td>
+                    ))}
+                  </tr>
+                  <tr className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-4 py-2.5 text-xs font-medium text-gray-700">متابعة</td>
+                    {registeredNodes.rows.map((row) => (
+                      <td key={row.department_id} className="px-4 py-2.5 text-xs">
+                        <Link
+                          href={`/hospitals/${hospitalId}/departments/${row.department_id}/limits`}
+                          className="inline-flex rounded-lg border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 transition-colors whitespace-nowrap"
+                        >
+                          فتح القسم
+                        </Link>
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Recent changes table */}
